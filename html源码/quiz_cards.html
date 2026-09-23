@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全班举牌卡</title>
+<script src="js/db.js"></script>
+<script src="js/common.js"></script>
+<script src="js/sw_boot.js"></script>
+<style>
+:root { --label-size: 20pt; --card-w: 190mm; --edge: 8.75mm; --mg: 0mm; --qs: 138mm; --tsize: 22px; --tsize-sub: 14px; }
+* { box-sizing: border-box; }
+body { margin: 0; background: white; font-family: "Microsoft YaHei", Arial, sans-serif; }
+.print-toolbar {
+    position: fixed; top: 0; left: 0; right: 0; background: white;
+    padding: 8px 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 10;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+.print-toolbar form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; color: #555; }
+.print-toolbar label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.print-toolbar input[type=range] { width: 120px; vertical-align: middle; }
+.rangenum { width: 56px; padding: 2px 4px; }
+.print-body { padding: 92px 20px 40px; max-width: 900px; margin: 0 auto; }
+.print-title { text-align: center; margin-bottom: 8px; font-size: 20px; font-weight: bold; }
+.print-sub { text-align: center; color: #666; font-size: 13px; margin-bottom: 20px; }
+/* 答题卡：无底色无边框阴影；虚线仅标示二维码范围（与打印一致）；
+   qwrap 紧贴包裹码（含四周文字条带），条带宽=文字行高+2×边距，文字居中条带内、距码边=边距（0=紧贴）；
+   选项A/B/D 定位在码的上/右/左侧条带（B、D 随边旋转），选项C 与姓名/编号按阅读顺序排在码下方
+   （C 在 qwrap 内部随流排布，距码边=同一文字边距，与 A/B/D 一致贴边）
+   （原 PHP 内联尺寸改为 CSS 变量，由页尾 JS 按 GET 参数写入） */
+.qcard { position: relative; width: var(--card-w); min-height: 277mm; margin: 0 auto 24px; padding: 0 0 8mm;
+    background: #fff; text-align: center; page-break-inside: avoid; }
+.qwrap { position: relative; display: inline-block; padding: var(--edge); }
+.qbox { display: inline-block; line-height: 0; padding: 0; border: 1px dashed #bbb; }
+.qbox img, .qbox canvas { display: block; }
+.qedge-c { margin-top: var(--mg); font-weight: bold; font-size: var(--label-size); color: #111; line-height: 1.25; font-family: Arial, "Microsoft YaHei", sans-serif; }
+/* 举牌卡：学生把所选字母转到正上方出示，C 印在下方需预转 180° 转到上方时才正读 */
+body.raise .qedge-c { transform: rotate(180deg); }
+.qtexts { margin-top: 2mm; line-height: 1.5; }
+.qtexts .p-name { font-weight: bold; font-size: var(--tsize); }
+.qtexts .p-sub { font-size: var(--tsize-sub); color: #333; }
+.edge { position: absolute; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.edge span { font-weight: bold; font-size: var(--label-size); color: #111; white-space: nowrap; line-height: 1.25; font-family: Arial, "Microsoft YaHei", sans-serif; }
+.edge-a { top: 0; left: var(--edge); right: var(--edge); height: var(--edge); }
+.edge-b { top: var(--edge); right: 0; width: var(--edge); height: var(--qs); }
+.edge-d { top: var(--edge); left: 0; width: var(--edge); height: var(--qs); }
+.edge-b span { transform: rotate(90deg); }
+.edge-d span { transform: rotate(-90deg); }
+@media print {
+    .print-toolbar { display: none; }
+    .print-body { padding: 0; }
+    .qcard { page-break-after: always; margin: 0 auto; }
+    .qcard:last-child { page-break-after: auto; }
+}
+@page { size: A4 portrait; margin: 10mm; }
+</style>
+</head>
+<body>
+<div class="print-toolbar">
+    <b style="font-size:14px;color:#333;">🖨 加载中…</b>
+    <form method="get" autocomplete="off">
+        <input type="hidden" name="class_id" value="0" autocomplete="off">
+        <input type="hidden" name="mode" value="raise" autocomplete="off">
+        <input type="hidden" name="set" value="1" autocomplete="off">
+        <label id="qsLabel" title="码边长（毫米），最大 190 可撑满 A4 可打印宽，识别距离最远"><span id="qsLabelText">码大小</span>
+            <input type="range" name="qs" min="60" max="190" value="138" oninput="qsNum.value=this.value" onchange="this.form.submit()" autocomplete="off">
+            <input type="number" id="qsNum" class="rangenum" min="60" max="190" value="138" onchange="this.form.qs.value=this.value;this.form.submit()" autocomplete="off"> mm
+        </label>
+        <label title="四边「选项A/B/C/D」文字大小">选项文字
+            <input type="range" name="size" min="10" max="200" value="20" oninput="sizeNum.value=this.value" onchange="this.form.submit()" autocomplete="off">
+            <input type="number" id="sizeNum" class="rangenum" min="10" max="200" value="20" onchange="this.form.size.value=this.value;this.form.submit()" autocomplete="off"> pt
+        </label>
+        <label title="「选项A/B/C/D」文字与码边的距离，0=紧贴码边（码面可尽量放大，打印后识别距离更远）">文字边距
+            <input type="range" name="mg" min="0" max="50" value="0" oninput="mgNum.value=this.value" onchange="this.form.submit()" autocomplete="off">
+            <input type="number" id="mgNum" class="rangenum" min="0" max="50" value="0" onchange="this.form.mg.value=this.value;this.form.submit()" autocomplete="off"> mm
+        </label>
+        <label><input type="checkbox" name="f_name" value="1" checked onchange="this.form.submit()" autocomplete="off"> 姓名</label>
+        <label><input type="checkbox" name="f_no" value="1" checked onchange="this.form.submit()" autocomplete="off"> 编号</label>
+        <label title="姓名/编号文字大小">文字字号
+            <input type="number" name="ts" class="rangenum" min="10" max="72" value="22" onchange="this.form.submit()" autocomplete="off"> px
+        </label>
+        <noscript><button type="submit" class="btn btn-sm">应用</button></noscript>
+    </form>
+    <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-sm" onclick="window.print()">🖨 打印</button>
+        <button type="button" class="btn btn-sm" id="pdfBtn" onclick="exportPDF()">导出PDF</button>
+        <button type="button" class="btn btn-sm" id="wordBtn" onclick="exportWord()">导出Word</button>
+        <a class="btn btn-sm btn-outline" style="text-decoration:none;" id="backLink" href="qrcode.html">返回</a>
+    </div>
+    <span style="flex:1 100%;font-size:12.5px;color:#888;" id="usageTip"></span>
+</div>
+
+<div class="print-body" id="printBody">
+    <div class="print-title-block">
+        <div class="print-title">加载中…</div>
+    </div>
+</div>
+
+<script src="assets/html2canvas.min.js"></script>
+<script src="assets/jspdf.umd.min.js"></script>
+<script>
+// 全班举牌卡打印（原 quiz_cards.php 单机版；设置经 GET 自提交即时生效，班级与学生名单改查 IndexedDB）
+function showToast(msg, type, sticky) {
+    var wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.className = 'toast-wrap'; document.body.appendChild(wrap); }
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' toast-' + type : '');
+    t.innerHTML = msg;
+    t.addEventListener('click', function () { dismiss(); });
+    wrap.appendChild(t);
+    var tm = null;
+    function dismiss() { if (tm) clearTimeout(tm); if (t.parentNode) t.parentNode.removeChild(t); }
+    if (!sticky) tm = setTimeout(dismiss, 3000);
+}
+
+// ===== 设置（GET 参数即时生效，语义与原 PHP 页头一致） =====
+function clampI(v, lo, hi, dft) {
+    v = parseInt(v, 10);
+    return (isNaN(v) || v < lo || v > hi) ? dft : v;
+}
+function r2(n) { return Math.round(n * 100) / 100; }
+var classId = QJ.qint('class_id', 0);
+// 卡片模式：仅举牌卡（6x6 黑白图案四选一）；原答题码（quiz）已随答题登记模式一并移除
+var MODE = 'raise';
+var IS_RAISE = MODE === 'raise';
+var MODE_LABEL = '举牌卡';
+var QS = clampI(QJ.qget('qs', ''), 60, 190, 138);          // 码/图案边长（mm）
+var LABEL_SIZE = clampI(QJ.qget('size', ''), 10, 200, 20); // 选项文字大小（pt）
+var MG = clampI(QJ.qget('mg', ''), 0, 50, 0);              // 文字与码边距离（mm）
+var SUBMITTED = QJ.qint('set', 0) === 1;                   // 带设置提交过：未勾选的复选框不在 GET 中，视为 0
+var F_NAME = SUBMITTED ? (QJ.qint('f_name', 0) === 1) : true;
+var F_NO = SUBMITTED ? (QJ.qint('f_no', 0) === 1) : true;
+var TSIZE = clampI(QJ.qget('ts', ''), 10, 72, 22);         // 文字字号（px）
+// 文字条带宽 = 文字行高 + 两侧边距（文字居中于条带，距码边 = 边距；边距 0 即紧贴码边）
+var LAB_H = r2(LABEL_SIZE * 0.352777 * 1.25);              // pt → mm（行高 1.25）
+var EDGE = r2(2 * MG + LAB_H);
+// 纸卡宽：不小于 A4 可打印宽 190mm；码+文字条带更宽时随之加宽（导出 PDF 自动缩放，浏览器直印可能裁切）
+var INNER_W = r2(QS + 2 * EDGE);
+var CARD_W = Math.max(190, INNER_W);
+var CARD_OVER = CARD_W > 190;
+// 生成超大码卡（1px≈0.2646mm；按 mm 精确换算，屏幕与打印 1:1）
+var MM2PX = 96 / 25.4;   // 96dpi 基准
+var CARD_W_MM = CARD_W;  // 纸卡设计宽（mm）：PDF/Word 按此换算实际尺寸（保持比例、不拉伸）
+var CLASS_NAME = '';
+
+// ===== 布局与工具栏（原 PHP 内联样式/表单回显 → CSS 变量 + 控件赋值） =====
+function applyLayout() {
+    var rs = document.documentElement.style;
+    rs.setProperty('--label-size', LABEL_SIZE + 'pt');
+    rs.setProperty('--card-w', CARD_W + 'mm');
+    rs.setProperty('--edge', EDGE + 'mm');
+    rs.setProperty('--mg', MG + 'mm');
+    rs.setProperty('--qs', QS + 'mm');
+    rs.setProperty('--tsize', TSIZE + 'px');
+    rs.setProperty('--tsize-sub', Math.max(12, TSIZE - 8) + 'px');
+    if (IS_RAISE) document.body.classList.add('raise');
+    var f = document.querySelector('.print-toolbar form');
+    f.elements['class_id'].value = classId;
+    f.elements['mode'].value = MODE;
+    f.elements['qs'].value = QS;
+    document.getElementById('qsNum').value = QS;
+    f.elements['size'].value = LABEL_SIZE;
+    document.getElementById('sizeNum').value = LABEL_SIZE;
+    f.elements['mg'].value = MG;
+    document.getElementById('mgNum').value = MG;
+    f.elements['f_name'].checked = F_NAME;
+    f.elements['f_no'].checked = F_NO;
+    f.elements['ts'].value = TSIZE;
+    document.getElementById('qsLabel').title = '图案边长（毫米），最大 190 可撑满 A4 可打印宽，识别距离最远';
+    document.getElementById('qsLabelText').textContent = '图案大小';
+    document.getElementById('backLink').href = 'qrcode.html?class_id=' + classId;
+    document.title = '全班' + MODE_LABEL + ' - ' + CLASS_NAME;
+    // 用法说明（原版文案 + 超宽警告）
+    var tip = '用法：A4 纸仅印一张超大举牌卡（6x6 黑白图案，黑白打印即可），图案=学生序号（全班通用），图案上方=选项A、右侧=选项B、左侧=选项D，选项C（预转 180°）与姓名/序号印在图案下方；学生把所选选项字母转到正上方出示，扫码端按卡片哪条边朝上识别选项（允许重复识别改答案）。不要裁掉图案外的白边，也不要折叠、遮挡或覆膜反光。虚线框仅为屏幕上标示图案范围，打印为浅灰细虚线。「文字边距」设 0 可让文字紧贴图案，从而把图案尽量放大（最大 190mm）以提高识别距离。已禁用学生不打印。';
+    if (CARD_OVER) {
+        tip += '<span style="color:#e67e22;font-weight:bold;">当前纸卡宽 ' + CARD_W + 'mm 超出 A4 可打印宽 190mm：浏览器直接打印可能裁切四边文字，建议用「导出PDF」（自动缩放到一页）或减小码大小/文字边距。</span>';
+    }
+    document.getElementById('usageTip').innerHTML = tip;
+}
+
+// ===== 卡片渲染（对照原 PHP 学生循环逐字节同构） =====
+function renderCards(students) {
+    document.querySelector('.print-toolbar > b').innerHTML = '🖨 全班' + MODE_LABEL + ' - ' + QJ.h(CLASS_NAME) + '（' + students.length + ' 人，每生一张 A4）';
+    var h = '<div class="print-title-block">'
+        + '<div class="print-title">' + QJ.h(CLASS_NAME) + ' - 全班' + MODE_LABEL + '</div>'
+        + '<div class="print-sub">把所选答案 A / B / C / D 中所选字母转到正上方出示（潜记举牌模式）</div>'
+        + '</div>';
+    if (!students.length) {
+        h += '<div class="qcard" style="min-height:60mm;line-height:60mm;color:#999;">该班级暂无学生（或已全部禁用），请先在学生名单中导入 / 启用</div>';
+    } else {
+        // 举牌卡序号重复检测（同班重复序号会导致扫码端无法唯一识别，卡片上红字提醒）
+        var seatDup = {};
+        if (IS_RAISE) {
+            students.forEach(function (sd) {
+                var k = String(sd.seat_no == null ? '' : sd.seat_no).trim();
+                if (k !== '') seatDup[k] = (seatDup[k] || 0) + 1;
+            });
+        }
+        students.forEach(function (s) {
+            // 举牌卡：图案编码学生序号（座号，需 1-255 的整数；扫码端按序号在项目班级内定位，举牌卡全班通用）
+            var praw = String(s.seat_no == null ? '' : s.seat_no).trim();
+            var pbits = null;
+            if (IS_RAISE && praw !== '' && String(parseInt(praw, 10)) === praw && parseInt(praw, 10) >= 1 && parseInt(praw, 10) <= 255) {
+                pbits = QJ.raise_pattern_bits(parseInt(praw, 10)).join('');
+            }
+            var pdup = IS_RAISE && praw !== '' && (seatDup[praw] || 0) > 1;
+            h += '<div class="qcard"><div class="qwrap">'
+                + '<div class="edge edge-a"><span>选项A</span></div>'
+                + '<div class="edge edge-b"><span>选项B</span></div>'
+                + '<div class="edge edge-d"><span>选项D</span></div>';
+            h += '<div class="qbox" data-qs="' + QS + '" data-bits="' + (pbits ? pbits : '') + '"></div>';
+            if (IS_RAISE && !pbits) {
+                h += '<div style="color:#c0392b;font-weight:bold;margin-top:4mm;">序号「' + QJ.h(praw !== '' ? praw : '空') + '」无法生成举牌卡（需 1-255 的整数序号）</div>';
+            } else if (pdup) {
+                h += '<div style="color:#c0392b;font-weight:bold;margin-top:4mm;">序号「' + QJ.h(praw) + '」在班级内重复，扫码无法唯一识别，请先修改座号</div>';
+            }
+            h += '<div class="qedge-c">选项C</div>';
+            if (F_NAME || F_NO) {
+                h += '<div class="qtexts">';
+                if (F_NAME && String(s.name == null ? '' : s.name) !== '') h += '<div class="p-name">' + QJ.h(s.name) + '</div>';
+                var noVal = praw;
+                if (F_NO && noVal !== '') h += '<div class="p-sub">序号 ' + QJ.h(noVal) + '</div>';
+                h += '</div>';
+            }
+            h += '</div></div>';
+        });
+    }
+    document.getElementById('printBody').innerHTML = h;
+    genCodes();
+}
+
+// 生成举牌卡图案（6x6 黑白图案，bit=1 白格 0 黑格，行序与扫码端码本一致）
+function genCodes() {
+    document.querySelectorAll('.qbox').forEach(function (el) {
+        var px = Math.round(parseInt(el.dataset.qs || '138', 10) * MM2PX);
+        if (!el.dataset.bits) return;   // 无效序号：图案留空，卡片上已显示红色提示
+        var bits = el.dataset.bits;
+        var cell = Math.max(6, Math.floor(px / 6));
+        var size = cell * 6;
+        var cv = document.createElement('canvas');
+        cv.width = size; cv.height = size;
+        var ctx = cv.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, size, size);
+        ctx.fillStyle = '#000000';
+        for (var r = 0; r < 6; r++) {
+            for (var c = 0; c < 6; c++) {
+                if (bits.charAt(r * 6 + c) === '0') ctx.fillRect(c * cell, r * cell, cell, cell);
+            }
+        }
+        el.appendChild(cv);
+    });
+}
+
+// ===== 导出 PDF / Word（共享截图管线，每生一页） =====
+var exporting = false;
+function beginExport(btnId) {
+    if (exporting) return null;
+    if (typeof html2canvas === 'undefined') { showToast('导出组件加载失败，请刷新页面重试', 'error'); return null; }
+    exporting = true;
+    var btn = document.getElementById(btnId);
+    var oldText = btn.textContent;
+    btn.disabled = true;
+    return {
+        progress: function (t) { btn.textContent = t; },
+        done: function () { btn.disabled = false; btn.textContent = oldText; exporting = false; }
+    };
+}
+async function captureCards(setProgress) {
+    var els = document.querySelectorAll('.qcard');
+    var out = [];
+    for (var i = 0; i < els.length; i++) {
+        setProgress('生成中 ' + (i + 1) + '/' + els.length + '…');
+        var c = await html2canvas(els[i], { scale: 2, backgroundColor: '#ffffff' });
+        out.push({ img: c.toDataURL('image/jpeg', 0.9), w: c.width, h: c.height });   // JPEG 压缩，避免 jsPDF "Invalid string length"
+    }
+    return out;
+}
+function fileBase() { return MODE_LABEL + '_' + CLASS_NAME; }
+
+async function exportPDF() {
+    var ctx = beginExport('pdfBtn');
+    if (!ctx) return;
+    try {
+        var J = window.jspdf;
+        if (!J || !J.jsPDF) { showToast('PDF 组件加载失败，请刷新页面重试', 'error'); return; }
+        ctx.progress('准备中…');
+        var pdf = new J.jsPDF('p', 'mm', 'a4');
+        var cards = await captureCards(ctx.progress);
+        if (!cards.length) { showToast('没有可导出的内容', 'error'); return; }
+        cards.forEach(function (u, i) {
+            if (i > 0) pdf.addPage();
+            // 按设计宽换算 mm 尺寸，等比缩放放入 A4 可打印区（190×277）并水平居中；超出自动缩到一页内
+            var mmpp = CARD_W_MM / u.w;
+            var wmm = u.w * mmpp, hmm = u.h * mmpp;
+            var s = Math.min(190 / wmm, 277 / hmm, 1);
+            var w = wmm * s, h = hmm * s;
+            pdf.addImage(u.img, 'JPEG', (210 - w) / 2, (297 - h) / 2, w, h);
+        });
+        pdf.save(fileBase() + '.pdf');
+    } catch (e) {
+        showToast('PDF 生成失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+        ctx.done();
+    }
+}
+
+function b64ut8(str) { return btoa(unescape(encodeURIComponent(str))); }
+function b64wrap(b64) { return b64.replace(/(.{76})/g, '$1\r\n'); }
+async function exportWord() {
+    var ctx = beginExport('wordBtn');
+    if (!ctx) return;
+    try {
+        ctx.progress('准备中…');
+        var cards = await captureCards(ctx.progress);
+        if (!cards.length) { showToast('没有可导出的内容', 'error'); return; }
+        var images = [];
+        var body = '';
+        cards.forEach(function (u, idx) {
+            var cid = 'qcard' + idx;
+            images.push({ cid: cid, b64: u.img.split(',')[1] });
+            // 按设计宽换算 mm → px(96dpi)，保持比例不拉伸
+            var mmpp = CARD_W_MM / u.w;
+            var w = Math.round(u.w * mmpp / 25.4 * 96), h = Math.round(u.h * mmpp / 25.4 * 96);
+            body += (idx > 0 ? '<br clear="all" style="page-break-before:always">' : '')
+                + '<img src="cid:' + cid + '" width="' + w + '" height="' + h + '" style="display:block;margin:0 auto;">';
+        });
+        var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">'
+            + '<head><meta charset="utf-8"><title>' + fileBase() + '</title>'
+            + '<style>@page Section1 { size: 595.3pt 841.9pt; margin: 28pt; } div.Section1 { page: Section1; }</style></head>'
+            + '<body><div class="Section1">' + body + '</div></body></html>';
+        var B = '----=_QR_MHTML_BOUNDARY_';
+        var mime = 'MIME-Version: 1.0\r\n'
+            + 'Content-Type: multipart/related; type="text/html"; boundary="' + B + '"\r\n\r\n'
+            + '--' + B + '\r\n'
+            + 'Content-Type: text/html; charset="utf-8"\r\n'
+            + 'Content-Transfer-Encoding: base64\r\n'
+            + 'Content-Location: file:///C:/qr/qcard.html\r\n\r\n'
+            + b64wrap(b64ut8(html)) + '\r\n';
+        images.forEach(function (im) {
+            mime += '--' + B + '\r\n'
+                + 'Content-Type: image/jpeg\r\n'
+                + 'Content-Transfer-Encoding: base64\r\n'
+                + 'Content-Location: file:///C:/qr/' + im.cid + '.jpg\r\n'
+                + 'Content-ID: <' + im.cid + '>\r\n\r\n'
+                + b64wrap(im.b64) + '\r\n';
+        });
+        mime += '--' + B + '--\r\n';
+        var bytes = new Uint8Array(mime.length);
+        for (var b = 0; b < mime.length; b++) bytes[b] = mime.charCodeAt(b) & 0xFF;
+        var blob = new Blob([bytes], { type: 'application/msword' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = fileBase() + '.doc';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+    } catch (e) {
+        showToast('Word 生成失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+        ctx.done();
+    }
+}
+
+// ===== 数据装载（班级 + 未禁用学生，原页头查询 → 本地查库；班级缺失回班级列表） =====
+async function loadData() {
+    if (classId <= 0) { location.href = 'classes.html'; return; }
+    var cls = await DB.get('classes', classId);
+    if (!cls || cls.deleted_at) { location.href = 'classes.html'; return; }
+    CLASS_NAME = cls.name || '';
+    var rows = await DB.by('students', 'class_id', classId);
+    rows = rows.filter(function (s) { return !parseInt(s.disabled, 10); });   // 已禁用学生不打印卡片
+    rows.sort(function (a, b) {   // ORDER BY CAST(seat_no AS UNSIGNED) ASC, id ASC
+        var sa = parseInt(a.seat_no, 10) || 0, sb = parseInt(b.seat_no, 10) || 0;
+        return (sa - sb) || (a.id - b.id);
+    });
+    applyLayout();
+    renderCards(rows);
+}
+loadData();
+</script>
+</body>
+</html>

@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>统计报表 - 潜记二维码作业登记系统</title>
+    <link rel="stylesheet" href="css/style.css?v=20260915">
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="favicon.ico"/>
+    <script src="js/db.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/sw_boot.js"></script>
+</head>
+<body>
+<nav class="navbar">
+        <div class="navbar-inner">
+        <a class="navbar-brand" href="index.html">潜记 · 作业登记</a>
+        <div class="navbar-menu">
+                                    <a href="index.html">班级列表</a>
+                        <a href="export.html" class="active">统计报表</a>
+                    </div>
+        <!-- 移动端：汉堡按钮 → 左侧抽屉菜单 -->
+        <button type="button" class="nav-burger" onclick="toggleDrawer(true)" aria-label="打开菜单">☰</button>
+    </div>
+</nav>
+<!-- 移动端左侧抽屉菜单 -->
+<div class="drawer-mask" id="drawerMask" onclick="toggleDrawer(false)"></div>
+<aside class="side-drawer" id="sideDrawer" aria-label="导航菜单">
+    <div class="drawer-head">
+        <b>潜记 · 作业登记</b>
+        <button type="button" class="drawer-close" onclick="toggleDrawer(false)" aria-label="关闭菜单">✕</button>
+    </div>
+        <nav class="drawer-nav">
+                <a href="index.html">班级列表</a>
+                <a href="export.html" class="active">统计报表</a>
+            </nav>
+</aside>
+<script>
+function toggleDrawer(open) {
+    var d = document.getElementById('sideDrawer');
+    var m = document.getElementById('drawerMask');
+    if (!d || !m) return;
+    d.classList.toggle('open', open);
+    m.classList.toggle('show', open);
+}
+</script>
+<!-- 移动端底部导航栏（PC 隐藏，≤768px 显示） -->
+<nav class="bottom-nav">
+        <a class="bottom-nav-item" href="index.html">
+        <span class="bottom-nav-icon">📘</span>
+        <span class="bottom-nav-text">班级列表</span>
+    </a>
+        <a class="bottom-nav-item active" href="export.html">
+        <span class="bottom-nav-icon">📊</span>
+        <span class="bottom-nav-text">统计报表</span>
+    </a>
+    </nav>
+<div class="app-content">
+
+<div class="panel">
+    <h3>📅 导出时间范围 <span style="font-size:12px;color:#999;font-weight:normal;">登记/打卡按所选日期过滤；留空 = 全部时间；下方图表与全部导出按钮联动</span><button type="button" class="hint-q" onclick="toggleHint(event, '<b>时间范围说明</b><br>· 登记按登记时间、打卡按打卡日期过滤<br>· 留空开始/结束 = 全部时间<br>· 快捷按钮：本周（周一～周日）/ 上周 / 本月 / 全部时间<br>· 下方数据总览图表与所有导出文件自动携带所选范围')">?</button></h3>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <label style="font-size:13px;color:#555;">开始</label>
+        <input type="date" id="dlFrom" value="" onchange="fetchDash()" style="padding:6px 8px;border:1px solid #d7dce8;border-radius:6px;font-size:13px;" autocomplete="off">
+        <label style="font-size:13px;color:#555;">结束</label>
+        <input type="date" id="dlTo" value="" onchange="fetchDash()" style="padding:6px 8px;border:1px solid #d7dce8;border-radius:6px;font-size:13px;" autocomplete="off">
+        <button type="button" class="btn btn-sm btn-outline" onclick="setRangeRel('week')">本周</button>
+        <button type="button" class="btn btn-sm btn-outline" onclick="setRangeRel('lastweek')">上周</button>
+        <button type="button" class="btn btn-sm btn-outline" onclick="setRangeRel('month')">本月</button>
+        <button type="button" class="btn btn-sm btn-outline" onclick="setRangeRel('all')">全部时间</button>
+        <span id="rangeTip" style="font-size:12px;color:#999;"></span>
+    </div>
+</div>
+
+<!-- 📈 数据总览：KPI + ECharts 图表（随导出时间范围联动） -->
+<div class="panel">
+    <h3>📈 数据总览 <span style="font-size:12px;color:#999;font-weight:normal;">图表随上方时间范围联动；每张图右上角可存为图片</span></h3>
+    <div class="stat-bar" style="flex-wrap:wrap;">
+        <div class="stat-box"><div class="num" id="kpiClasses">–</div><div class="label">班级总数</div></div>
+        <div class="stat-box"><div class="num" id="kpiStudents">–</div><div class="label">学生总数</div></div>
+        <div class="stat-box"><div class="num" id="kpiProjects">–</div><div class="label">项目总数</div></div>
+        <div class="stat-box"><div class="num" id="kpiRegs">–</div><div class="label">登记/打卡人次</div></div>
+        <div class="stat-box"><div class="num" id="kpiEvals">–</div><div class="label">评价人次</div></div>
+        <div class="stat-box"><div class="num" id="kpiRate">–</div><div class="label">登记人次/学生数</div></div>
+    </div>
+    <div id="dashMsg" style="display:none;color:#999;font-size:13px;padding:8px 0;"></div>
+    <div class="dash-grid">
+        <div><div id="chartRate" style="height:300px;"></div></div>
+        <div><div id="chartTrend" style="height:300px;"></div></div>
+        <div><div id="chartEval" style="height:300px;"></div></div>
+        <div><div id="chartGrade" style="height:300px;"></div></div>
+    </div>
+</div>
+
+<!-- 📤 报表导出：Tab 分区导航 -->
+<div class="panel">
+    <h3>📤 报表导出 <span style="font-size:12px;color:#999;font-weight:normal;">单表点对应按钮，批量走「班级报表 → 批量导出」；均自动携带时间范围</span></h3>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;" id="expTabs">
+        <button type="button" class="btn btn-sm btn-outline exp-tab active" onclick="switchExpTab(this,'tabClass')">🏫 班级报表</button><button type="button" class="hint-q" onclick="toggleHint(event, '<b>班级报表说明</b><br>· 按班级导出登记矩阵 / 明细 / 学生名单，还可批量导出多个班级（ZIP 打包）<br>· 单班导出为 Excel 工作簿，批量导出为 ZIP 压缩包<br>· 均按上方时间范围过滤')">?</button>
+    </div>
+</div>
+
+<!-- Tab 1：班级报表（单班导出表格 + 批量导出） -->
+<div id="tabClass" class="exp-tab-content panel">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;" class="exp-table">
+        <thead>
+            <tr style="background:#f5f7fb;color:#555;text-align:left;">
+                <th style="padding:8px 10px;border-bottom:1px solid #e0e3ef;">班级</th>
+                <th style="padding:8px 10px;border-bottom:1px solid #e0e3ef;width:70px;">学生数</th>
+                <th style="padding:8px 10px;border-bottom:1px solid #e0e3ef;">导出</th>
+            </tr>
+        </thead>
+        <tbody id="clsTbody"></tbody>
+    </table>
+
+    <div id="batchBox" style="display:none;border:1px dashed #c9d2ea;border-radius:8px;padding:12px 14px;margin-top:14px;background:#fafbff;">
+        <div style="font-weight:600;margin-bottom:8px;">📦 批量导出 <span style="font-size:12px;color:#999;font-weight:normal;">勾选班级与报表类型 → 打包 ZIP 下载（每个班级一个 Excel 工作簿 + 导出说明）</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <label class="chipbox"><input type="checkbox" id="batClsAll" onchange="toggleBatAll(this)" autocomplete="off"> 全选班级</label>
+            <span id="batClsChips" style="display:contents;"></span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:13px;color:#555;">报表类型：</span>
+            <label class="chipbox on"><input type="checkbox" class="bat-type" value="matrix" checked onchange="this.parentNode.classList.toggle('on',this.checked)" autocomplete="off"> 登记矩阵</label>
+            <label class="chipbox on"><input type="checkbox" class="bat-type" value="detail" checked onchange="this.parentNode.classList.toggle('on',this.checked)" autocomplete="off"> 全部项目明细</label>
+            <label class="chipbox"><input type="checkbox" class="bat-type" value="students" onchange="this.parentNode.classList.toggle('on',this.checked)" autocomplete="off"> 全部学生</label>
+            <button type="button" class="btn btn-sm" style="background:#667eea;color:#fff;border:none;" onclick="doBatchExport()">⬇ 导出选中班级（ZIP）</button>
+            <span id="batTip" style="font-size:12px;color:#999;">已选 0 个班级</span>
+        </div>
+    </div>
+</div>
+
+<!-- 📊 在线统计：弹窗查看班级/学生明细（默认折叠） -->
+<div class="panel">
+    <h3 style="cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;" onclick="toggleSec('onlinePanel','onlineArrow')" title="点击展开/收起">
+        📊 在线统计（班级 / 学生明细查看） <span id="onlineArrow" style="color:#999;font-size:14px;">▸</span>
+    </h3>
+    <div id="onlinePanel" style="display:none;">
+        <p style="font-weight:500;margin:6px 0 8px;color:#555;">班级登记统计 <span style="font-size:12px;color:#999;">点击弹窗打开，可最大化 / 关闭</span></p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="onlineCls"></div>
+
+        <p style="font-weight:500;margin:16px 0 6px;color:#555;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;" onclick="toggleSec('stdPanel','stdArrow')" title="点击展开/收起">
+            👥 学生登记统计 <span id="stdArrow" style="color:#999;font-size:14px;">▸</span>
+        </p>
+        <div id="stdPanel" style="display:none;"></div>
+    </div>
+</div>
+
+<!-- 报表弹窗：iframe 加载统计页（班级登记统计 / 学生登记统计），支持最大化 / ✕ 关闭 -->
+<div class="modal-mask" id="reportModal">
+    <div class="modal" style="width:960px;max-width:92vw;height:86vh;display:flex;flex-direction:column;">
+        <h3 id="reportTitle">统计报表</h3>
+        <iframe id="reportFrame" src="about:blank" style="flex:1;width:100%;border:1px solid #e0e3ef;border-radius:8px;background:#fff;min-height:0;"></iframe>
+    </div>
+</div>
+
+<style>
+.dash-grid { display:grid; grid-template-columns:1fr; gap:12px; }
+@media (min-width:980px) { .dash-grid { grid-template-columns:1fr 1fr; } }
+.dash-grid > div { border:1px solid #eef0f6; border-radius:8px; overflow:hidden; }
+.chipbox { display:inline-flex; align-items:center; gap:5px; border:1px solid #d7dce8; border-radius:16px; padding:4px 11px; cursor:pointer; font-size:13px; color:#444; user-select:none; background:#fff; }
+.chipbox.on { border-color:#667eea; background:#eef0fd; color:#4a4ac4; }
+.chipbox input { accent-color:#667eea; margin:0; }
+.exp-tab.active { background:#667eea; color:#fff; border-color:#667eea; }
+.exp-table tbody tr:hover { background:#fafbff; }
+</style>
+<script src="assets/echarts.min.js"></script>
+<script src="assets/jszip.min.js"></script>
+<script>
+// ===== 统计报表中心（单机版）：数据全存浏览器 IndexedDB，导出文件全部浏览器端构建下载 =====
+// 口径逐条对照原版 export.php（stats_data / dtype=class|class_detail|class_students|batch）
+'use strict';
+
+// ===== 基础工具 =====
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+function dateStr(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function addDays(ymd, n) {
+    var d = new Date(ymd + 'T00:00:00');
+    d.setDate(d.getDate() + n);
+    return dateStr(d);
+}
+function daysBetween(a, b) {
+    return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
+}
+function weekMonSun(offsetWeeks) {   // 本周/上周 周一～周日
+    var now = new Date();
+    var mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7) + offsetWeeks * 7);
+    return [dateStr(mon), addDays(dateStr(mon), 6)];
+}
+function nz(v) { return v === null || v === undefined ? '' : String(v); }
+function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+function addSlashes(s) {
+    return String(s === null || s === undefined ? '' : s)
+        .replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+function seatNum(v) { var n = parseInt(v, 10); return (isNaN(n) || n < 0) ? 0 : n; }   // 同 CAST(seat_no AS UNSIGNED)
+
+// ===== 数据层 =====
+var D = { classes: [], students: [], projects: [], records: [], record_days: [], settings: {}, stuMap: {}, projMap: {} };
+
+function projectClassIds(p) {   // 项目覆盖班级（与 stats.html 同口径）
+    if (p.scope === 'grade' && (parseInt(p.grade_id, 10) || 0) > 0) {
+        return D.classes.filter(function (c) { return !c.deleted_at && (parseInt(c.grade_id, 10) || 0) === (parseInt(p.grade_id, 10) || 0); }).map(function (c) { return c.id; });
+    }
+    if (p.scope === 'school' || p.scope === 'subject') {
+        return D.classes.filter(function (c) { return !c.deleted_at; }).map(function (c) { return c.id; });
+    }
+    return p.class_id ? [parseInt(p.class_id, 10)] : [];
+}
+function sortedClasses() {   // 同 PHP ORDER BY grade_id, id（单机版无年段，即按 id）
+    return D.classes.filter(function (c) { return !c.deleted_at; })
+        .sort(function (a, b) { return (parseInt(a.grade_id, 10) || 0) - (parseInt(b.grade_id, 10) || 0) || a.id - b.id; });
+}
+
+// ===== 导出时间范围：快捷填充 + 联动图表 + 导出链接自动携带 from/to =====
+function rangeVals() {
+    var f = (document.getElementById('dlFrom') || {}).value || '';
+    var t = (document.getElementById('dlTo') || {}).value || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) f = '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) t = '';
+    if (f !== '' && t !== '' && f > t) { var x = f; f = t; t = x; }
+    return { f: f, t: t };
+}
+function setRange(f, t) {
+    var fi = document.getElementById('dlFrom'), ti = document.getElementById('dlTo');
+    if (fi) fi.value = f || '';
+    if (ti) ti.value = t || '';
+    if (typeof fetchDash === 'function') fetchDash();
+}
+function setRangeRel(kind) {
+    if (kind === 'week') { var w = weekMonSun(0); setRange(w[0], w[1]); }
+    else if (kind === 'lastweek') { var lw = weekMonSun(-1); setRange(lw[0], lw[1]); }
+    else if (kind === 'month') {
+        var n = new Date();
+        setRange(dateStr(new Date(n.getFullYear(), n.getMonth(), 1)), dateStr(new Date(n.getFullYear(), n.getMonth() + 1, 0)));
+    }
+    else setRange('', '');
+}
+function initRange() {   // 默认选中本周（同原版服务端渲染的周一～周日默认值）
+    var w = weekMonSun(0);
+    var fi = document.getElementById('dlFrom'), ti = document.getElementById('dlTo');
+    if (fi && !fi.value) fi.value = w[0];
+    if (ti && !ti.value) ti.value = w[1];
+    var tip = document.getElementById('rangeTip');
+    if (tip) tip.textContent = '所有导出与图表自动携带所选范围（例：本周一 ' + w[0] + ' ～ 周日 ' + w[1] + '）';
+}
+
+// ===== 报表导出 Tab 切换 =====
+function switchExpTab(btn, id) {
+    document.querySelectorAll('.exp-tab-content').forEach(function (el) { el.style.display = 'none'; });
+    var target = document.getElementById(id);
+    if (target) target.style.display = '';
+    document.querySelectorAll('.exp-tab').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+}
+
+// ===== 通用折叠区 =====
+function toggleSec(panelId, arrowId) {
+    var p = document.getElementById(panelId), a = document.getElementById(arrowId);
+    if (!p) return;
+    var show = p.style.display === 'none';
+    p.style.display = show ? '' : 'none';
+    if (a) a.textContent = show ? '▾' : '▸';
+}
+function toggleStdStats() { toggleSec('stdPanel', 'stdArrow'); }
+
+// ===== 批量导出（勾选交互） =====
+function toggleBatAll(master) {
+    document.querySelectorAll('.bat-cls').forEach(function (c) {
+        c.checked = master.checked;
+        c.parentNode.classList.toggle('on', c.checked);
+    });
+    updateBatTip();
+}
+function batCount() { return document.querySelectorAll('.bat-cls:checked').length; }
+function updateBatTip() {
+    var tip = document.getElementById('batTip');
+    if (tip) tip.textContent = '已选 ' + batCount() + ' 个班级';
+}
+document.addEventListener('change', function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains('bat-cls')) updateBatTip();
+});
+function doBatchExport() {
+    var ids = Array.prototype.map.call(document.querySelectorAll('.bat-cls:checked'), function (c) { return c.value; });
+    var types = Array.prototype.map.call(document.querySelectorAll('.bat-type:checked'), function (c) { return c.value; });
+    if (!ids.length) { showToast('请先勾选要导出的班级', 'error'); return; }
+    if (!types.length) { showToast('请至少勾选一种报表类型', 'error'); return; }
+    var r = rangeVals();
+    runBatchExport(ids.join(','), types.join(','), r.f, r.t);
+}
+
+// ===== 报表弹窗（iframe） =====
+function openReport(url, title) {
+    if (url.indexOf('embed=1') === -1) url += (url.indexOf('?') === -1 ? '?' : '&') + 'embed=1'; // 内嵌模式：无导航无返回
+    document.getElementById('reportFrame').src = url;
+    document.getElementById('reportTitle').textContent = title || '统计报表';
+    document.getElementById('reportModal').classList.add('show');
+}
+(function () {
+    var mask = document.getElementById('reportModal');
+    if (!mask) return;
+    var frame = document.getElementById('reportFrame');
+    // 关闭时卸载 iframe（遮罩空白点击 / 注入的 ✕ 按钮均生效）
+    mask.addEventListener('modalclosed', function () { frame.src = 'about:blank'; });
+    mask.addEventListener('click', function (e) {
+        if (e.target === mask) { mask.classList.remove('show'); frame.src = 'about:blank'; }
+    });
+})();
+
+// ===== 数据总览（ECharts：班级登记对比 / 每日动态 / 评价分布 / 年段对比） =====
+var dashCharts = {};
+function dashText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
+function fetchDash() {
+    var r = rangeVals();
+    try {
+        renderDash(computeStatsData(r.f, r.t));
+    } catch (e) {
+        var m = document.getElementById('dashMsg');
+        if (m) { m.style.display = ''; m.textContent = '数据总览加载失败，请刷新重试'; }
+    }
+}
+function dashBase(title) {
+    return {
+        title: { text: title, left: 'center', top: 6, textStyle: { fontSize: 13, color: '#555' } },
+        tooltip: { trigger: 'axis' },
+        toolbox: { right: 6, top: 2, feature: { saveAsImage: { title: '存图' } } }
+    };
+}
+function dashEmpty(id, title) {
+    if (dashCharts[id]) dashCharts[id].setOption({
+        title: { text: title, left: 'center', top: 'middle', textStyle: { fontSize: 13, color: '#aaa' } }
+    }, true);
+}
+function renderDash(d) {
+    if (typeof echarts === 'undefined') {
+        var m = document.getElementById('dashMsg');
+        if (m) { m.style.display = ''; m.textContent = '图表库（assets/echarts.min.js）未找到，图表不可用'; }
+        return;
+    }
+    ['chartRate', 'chartTrend', 'chartEval', 'chartGrade'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && !dashCharts[id]) dashCharts[id] = echarts.init(el);
+    });
+    var k = d.kpi || {};
+    dashText('kpiClasses', k.classes || 0);
+    dashText('kpiStudents', k.students || 0);
+    dashText('kpiProjects', k.projects || 0);
+    dashText('kpiRegs', k.regs || 0);
+    dashText('kpiEvals', k.evals || 0);
+    dashText('kpiRate', (k.rate || 0) + '%');
+
+    // 1. 各班级登记人次 + 登记率
+    var cls = d.class_rates || [];
+    if (cls.length && dashCharts.chartRate) {
+        var names = cls.map(function (r) { return r.name; });
+        dashCharts.chartRate.setOption(Object.assign(dashBase('各班级登记人次与登记率'), {
+            grid: { left: 50, right: 52, top: 44, bottom: names.length > 8 ? 74 : 50 },
+            xAxis: { type: 'category', data: names, axisLabel: { rotate: names.length > 6 ? 30 : 0, interval: 0, fontSize: 11 } },
+            yAxis: [
+                { type: 'value', name: '人次' },
+                { type: 'value', name: '登记率%', position: 'right', axisLabel: { formatter: '{value}%' }, splitLine: { show: false } }
+            ],
+            series: [
+                { name: '登记人次', type: 'bar', data: cls.map(function (r) { return r.regs; }), itemStyle: { color: '#667eea' }, barMaxWidth: 34 },
+                { name: '登记率%', type: 'line', yAxisIndex: 1, data: cls.map(function (r) { return r.rate; }), itemStyle: { color: '#27ae60' },
+                  label: { show: names.length <= 15, formatter: '{c}%', fontSize: 10 } }
+            ]
+        }), true);
+    } else dashEmpty('chartRate', '暂无班级数据');
+
+    // 2. 每日动态（打卡 + 一次性登记，堆叠）
+    var trend = d.trend || [];
+    if (trend.length && dashCharts.chartTrend) {
+        dashCharts.chartTrend.setOption(Object.assign(dashBase('每日动态（人次）'), {
+            legend: { top: 28 },
+            grid: { left: 50, right: 24, top: 58, bottom: trend.length > 40 ? 76 : 50 },
+            dataZoom: trend.length > 40 ? [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 10 }] : [],
+            xAxis: { type: 'category', data: trend.map(function (r) { return r.date.slice(5); }), axisLabel: { fontSize: 11 } },
+            yAxis: { type: 'value', name: '人次' },
+            series: [
+                { name: '打卡人次', type: 'bar', stack: 't', data: trend.map(function (r) { return r.check; }), itemStyle: { color: '#00bcd4' } },
+                { name: '一次性登记', type: 'bar', stack: 't', data: trend.map(function (r) { return r.reg; }), itemStyle: { color: '#f39c12' } }
+            ]
+        }), true);
+    } else dashEmpty('chartTrend', '暂无动态数据');
+
+    // 3. 评价内容分布（环形）
+    var ev = d.eval_dist || [];
+    if (ev.length && dashCharts.chartEval) {
+        dashCharts.chartEval.setOption({
+            title: { text: '评价内容分布（Top 10）', left: 'center', top: 6, textStyle: { fontSize: 13, color: '#555' } },
+            tooltip: { trigger: 'item', formatter: '{b}: {c}（{d}%）' },
+            toolbox: { right: 6, top: 2, feature: { saveAsImage: { title: '存图' } } },
+            legend: { type: 'scroll', orient: 'vertical', right: 4, top: 44, bottom: 16, textStyle: { fontSize: 11 } },
+            series: [{
+                type: 'pie', radius: ['36%', '62%'], center: ['36%', '58%'],
+                data: ev.map(function (x) { return { name: x.v, value: x.c }; }),
+                label: { show: false }, emphasis: { label: { show: true, formatter: '{b}: {c}' } }
+            }]
+        }, true);
+    } else dashEmpty('chartEval', '暂无评价数据');
+
+    // 4. 年段对比（多于 1 个年段才展示；单机版恒「仅一个年段，无对比」）
+    var gr = d.grade_rates || [];
+    if (gr.length > 1 && dashCharts.chartGrade) {
+        dashCharts.chartGrade.setOption(Object.assign(dashBase('年段对比（登记率%）'), {
+            grid: { left: 50, right: 24, top: 44, bottom: 50 },
+            xAxis: { type: 'category', data: gr.map(function (r) { return r.name; }), axisLabel: { fontSize: 11 } },
+            yAxis: { type: 'value', name: '登记率%', axisLabel: { formatter: '{value}%' } },
+            series: [{
+                name: '登记率%', type: 'bar', barMaxWidth: 46,
+                data: gr.map(function (r) { return r.rate; }),
+                itemStyle: { color: '#9b59b6' },
+                label: { show: true, position: 'top', formatter: '{c}%', fontSize: 11 }
+            }]
+        }), true);
+    } else dashEmpty('chartGrade', gr.length ? '仅一个年段，无对比' : '暂无年段数据');
+}
+window.addEventListener('resize', function () {
+    Object.keys(dashCharts).forEach(function (id) { if (dashCharts[id]) dashCharts[id].resize(); });
+});
+
+// ===== stats_data 本地等价实现（口径逐条对照原版 build_class_summary / stats_data） =====
+function computeStatsData(from, to) {
+    var out = { kpi: { classes: 0, students: 0, projects: 0, regs: 0, evals: 0, rate: 0 }, class_rates: [], grade_rates: [], trend: [], eval_dist: [] };
+    var classes = sortedClasses();
+    if (!classes.length) return out;
+    var classIdSet = {};
+    classes.forEach(function (c) { classIdSet[parseInt(c.id, 10)] = true; });
+    var ranged = (from !== '' || to !== '');
+    var fromTs = from !== '' ? from + ' 00:00:00' : '';
+    var toExcl = to !== '' ? addDays(to, 1) + ' 00:00:00' : '';
+    var stuTotal = 0, regTotal = 0, evalTotal = 0;
+    var gradeAgg = {};
+    classes.forEach(function (c) {
+        var cid = parseInt(c.id, 10);
+        var stu = 0, regs = 0, evals = 0;
+        D.students.forEach(function (s) { if (parseInt(s.class_id, 10) === cid) stu++; });
+        if (ranged) {
+            // 登记人次：一次性项目按 registered_at 落范围（含端点，$to 含当天）
+            D.records.forEach(function (r) {
+                if ((parseInt(r.registered, 10) || 0) !== 1) return;
+                var p = D.projMap[parseInt(r.project_id, 10)];
+                if (!p || p.deleted_at || (p.mode || 'count') === 'daily' || parseInt(p.class_id, 10) !== cid) return;
+                var at = String(r.registered_at || '');
+                if (at === '' || (fromTs !== '' && at < fromTs) || (toExcl !== '' && at >= toExcl)) return;
+                regs++;
+            });
+            // 打卡人次：打卡项目按 reg_date 落范围（学生须属于该打卡项目所在班级）
+            D.record_days.forEach(function (rd) {
+                var p = D.projMap[parseInt(rd.project_id, 10)];
+                if (!p || p.deleted_at || (p.mode || 'count') !== 'daily' || parseInt(p.class_id, 10) !== cid) return;
+                var s = D.stuMap[parseInt(rd.student_id, 10)];
+                if (!s || parseInt(s.class_id, 10) !== cid) return;
+                if (from !== '' && rd.reg_date < from) return;
+                if (to !== '' && rd.reg_date > to) return;
+                regs++;
+            });
+            // 评价人次：按 eval_at 落范围（不限模式）
+            D.records.forEach(function (r) {
+                if ((parseInt(r.registered, 10) || 0) !== 1) return;
+                if (String(r.eval_value || '') === '') return;
+                var p = D.projMap[parseInt(r.project_id, 10)];
+                if (!p || p.deleted_at || parseInt(p.class_id, 10) !== cid) return;
+                var ea = String(r.eval_at || '');
+                if (ea === '' || (fromTs !== '' && ea < fromTs) || (toExcl !== '' && ea >= toExcl)) return;
+                evals++;
+            });
+        } else {
+            // 无范围：登记人次不滤模式；评价人次=有评价内容的已登记记录
+            D.records.forEach(function (r) {
+                if ((parseInt(r.registered, 10) || 0) !== 1) return;
+                var p = D.projMap[parseInt(r.project_id, 10)];
+                if (!p || p.deleted_at || parseInt(p.class_id, 10) !== cid) return;
+                regs++;
+                if (String(r.eval_value || '') !== '') evals++;
+            });
+        }
+        out.class_rates.push({ name: nz(c.name), grade: '未分年段', students: stu, regs: regs, evals: evals,
+            rate: stu > 0 ? Math.round(regs / stu * 1000) / 10 : 0 });
+        if (!gradeAgg['未分年段']) gradeAgg['未分年段'] = { students: 0, regs: 0, evals: 0, n: 0 };
+        gradeAgg['未分年段'].students += stu;
+        gradeAgg['未分年段'].regs += regs;
+        gradeAgg['未分年段'].evals += evals;
+        gradeAgg['未分年段'].n++;
+        stuTotal += stu; regTotal += regs; evalTotal += evals;
+    });
+    Object.keys(gradeAgg).forEach(function (gname) {
+        var ga = gradeAgg[gname];
+        out.grade_rates.push({ name: gname, students: ga.students, regs: ga.regs, evals: ga.evals,
+            rate: ga.students > 0 ? Math.round(ga.regs / ga.students * 1000) / 10 : 0 });
+    });
+    // 项目总数（覆盖任一班级的未删除项目，每项目计 1）
+    var projCnt = 0;
+    D.projects.forEach(function (p) {
+        if (p.deleted_at) return;
+        var ids = projectClassIds(p);
+        for (var i = 0; i < ids.length; i++) {
+            if (classIdSet[ids[i]]) { projCnt++; return; }
+        }
+    });
+    out.kpi = { classes: classes.length, students: stuTotal, projects: projCnt, regs: regTotal, evals: evalTotal,
+        rate: stuTotal > 0 ? Math.round(regTotal / stuTotal * 1000) / 10 : 0 };
+
+    // 每日动态趋势：无范围=近30天；有范围=范围内（超120天截取最近120天）
+    var today = dateStr(new Date());
+    var tStart, tEnd;
+    if (from === '' && to === '') {
+        tStart = addDays(today, -29); tEnd = today;
+    } else {
+        tEnd = to !== '' ? to : today;
+        tStart = from !== '' ? from : addDays(tEnd, -29);
+        if (daysBetween(tStart, tEnd) > 119) tStart = addDays(tEnd, -119);
+    }
+    var dayMap = {};
+    D.record_days.forEach(function (rd) {
+        if (rd.reg_date < tStart || rd.reg_date > tEnd) return;
+        var p = D.projMap[parseInt(rd.project_id, 10)];
+        if (!p || p.deleted_at || (p.mode || 'count') !== 'daily') return;
+        var s = D.stuMap[parseInt(rd.student_id, 10)];
+        if (!s || !classIdSet[parseInt(s.class_id, 10)]) return;
+        if (!dayMap[rd.reg_date]) dayMap[rd.reg_date] = { check: 0, reg: 0 };
+        dayMap[rd.reg_date].check++;
+    });
+    D.records.forEach(function (r) {
+        if ((parseInt(r.registered, 10) || 0) !== 1) return;
+        var at = String(r.registered_at || '');
+        if (at === '' || at < tStart + ' 00:00:00' || at >= addDays(tEnd, 1) + ' 00:00:00') return;
+        var p = D.projMap[parseInt(r.project_id, 10)];
+        if (!p || p.deleted_at || (p.mode || 'count') === 'daily') return;
+        var s = D.stuMap[parseInt(r.student_id, 10)];
+        if (!s || !classIdSet[parseInt(s.class_id, 10)]) return;
+        var d = at.slice(0, 10);
+        if (!dayMap[d]) dayMap[d] = { check: 0, reg: 0 };
+        dayMap[d].reg++;
+    });
+    var dcur = tStart;
+    while (dcur <= tEnd) {
+        var e = dayMap[dcur] || { check: 0, reg: 0 };
+        out.trend.push({ date: dcur, check: e.check, reg: e.reg });
+        dcur = addDays(dcur, 1);
+    }
+
+    // 评价内容分布（Top 10，按 eval_at 落范围过滤；留空=全部）
+    var evCount = {};
+    D.records.forEach(function (r) {
+        var v = String(r.eval_value || '');
+        if (v === '') return;
+        var ea = String(r.eval_at || '');
+        if (fromTs !== '' && ea < fromTs) return;
+        if (toExcl !== '' && ea >= toExcl) return;
+        var p = D.projMap[parseInt(r.project_id, 10)];
+        if (!p || p.deleted_at) return;
+        var s = D.stuMap[parseInt(r.student_id, 10)];
+        if (!s || !classIdSet[parseInt(s.class_id, 10)]) return;
+        evCount[v] = (evCount[v] || 0) + 1;
+    });
+    out.eval_dist = Object.keys(evCount).map(function (v) { return { v: v, c: evCount[v] }; })
+        .sort(function (a, b) { return b.c - a.c; }).slice(0, 10);
+    return out;
+}
+
+// ===== 导出构建器（Excel XML 2003 .xls，与原版 output_excel_xml 同构） =====
+var XMLNS_HEAD = '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"'
+    + ' xmlns:o="urn:schemas-microsoft-com:office:office"'
+    + ' xmlns:x="urn:schemas-microsoft-com:office:excel"'
+    + ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">';
+function xmlEsc(s) {
+    return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+function excelXmlSheetName(name, used) {   // 非法字符清洗 + 限 20 字 + 去重（同蓝本）
+    name = String(name === null || name === undefined ? '' : name).replace(/[\\\/\?\*\[\]:]/g, ' ').trim();
+    if (name === '') name = 'Sheet';
+    var arr = Array.from(name);
+    if (arr.length > 20) name = arr.slice(0, 20).join('');
+    var base = name, i = 2;
+    while (used[name]) { name = base + '(' + i + ')'; i++; }
+    used[name] = true;
+    return name;
+}
+function excelXmlString(sheets) {
+    var out = '\uFEFF<?xml version="1.0" encoding="UTF-8"?>\n<?mso-application progid="Excel.Sheet"?>\n' + XMLNS_HEAD + '\n';
+    var used = {};
+    sheets.forEach(function (sh) {
+        var maxcols = 0;
+        sh.rows.forEach(function (row) { if (row.length > maxcols) maxcols = row.length; });
+        out += '<Worksheet ss:Name="' + xmlEsc(excelXmlSheetName(sh.name, used)) + '"><Table>';
+        for (var i = 0; i < maxcols; i++) out += '<Column ss:Width="95"/>';
+        sh.rows.forEach(function (row) {
+            out += '<Row>';
+            row.forEach(function (cell) {
+                out += '<Cell><Data ss:Type="String">' + xmlEsc(cell) + '</Data></Cell>';
+            });
+            out += '</Row>';
+        });
+        out += '</Table></Worksheet>\n';
+    });
+    out += '</Workbook>';
+    return out;
+}
+function outputExcelXml(filename, sheets) {
+    downloadBlob(filename, new Blob([excelXmlString(sheets)], { type: 'application/vnd.ms-excel;charset=utf-8' }));
+}
+function downloadBlob(filename, blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 400);
+}
+function stamp() {   // date('Ymd_Hi')
+    var d = new Date();
+    return '' + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '_' + pad2(d.getHours()) + pad2(d.getMinutes());
+}
+function nowLabel() {   // date('Y-m-d H:i')
+    var d = new Date();
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+function dlSuffix(from, to) {   // 同原版 $dl_suffix：有范围时文件名附 _from-to（去连字符）
+    return (from !== '' || to !== '') ? ('_' + String(from).replace(/-/g, '') + '-' + String(to).replace(/-/g, '')) : '';
+}
+
+// ===== 班级导出上下文（口径逐条对照 class_export_ctx / get_class_daily_data / get_class_records_map） =====
+function classExportCtx(classId, from, to) {
+    var klass = null;
+    D.classes.forEach(function (c) { if (!c.deleted_at && parseInt(c.id, 10) === classId) klass = c; });
+    if (!klass) return { error: '班级不存在' };
+    var projects = D.projects.filter(function (p) {
+        if (p.deleted_at) return false;
+        return projectClassIds(p).indexOf(classId) >= 0;
+    });
+    if (!projects.length) return { error: '该班级暂无可见项目' };
+    var students = D.students.filter(function (s) { return parseInt(s.class_id, 10) === classId; })
+        .sort(function (a, b) { return seatNum(a.seat_no) - seatNum(b.seat_no) || a.id - b.id; });
+    var pids = projects.map(function (p) { return parseInt(p.id, 10); });
+    var daily = getClassDailyData(pids, classId, from, to);
+    return { klass: klass, projects: projects, students: students, pids: pids,
+        dates_map: daily[0], dmap: daily[1], rec_map: getClassRecordsMap(pids, classId, from, to) };
+}
+function getClassDailyData(pids, classId, from, to) {   // [pid]=[日期列表] + [pid][student_id][reg_date]=打卡时间
+    var dates_map = {}, dmap = {}, pset = {};
+    pids.forEach(function (p) { pset[p] = true; });
+    var rows = D.record_days.filter(function (rd) {
+        if (!pset[parseInt(rd.project_id, 10)]) return false;
+        var s = D.stuMap[parseInt(rd.student_id, 10)];
+        if (!s || parseInt(s.class_id, 10) !== classId) return false;
+        if (from !== '' && rd.reg_date < from) return false;
+        if (to !== '' && rd.reg_date > to) return false;
+        return true;
+    }).sort(function (a, b) { return a.reg_date < b.reg_date ? -1 : (a.reg_date > b.reg_date ? 1 : 0); });
+    var last = {};
+    rows.forEach(function (rd) {
+        var pid = parseInt(rd.project_id, 10), sid = parseInt(rd.student_id, 10);
+        if (last[pid] !== rd.reg_date) {
+            (dates_map[pid] = dates_map[pid] || []).push(rd.reg_date);
+            last[pid] = rd.reg_date;
+        }
+        if (!dmap[pid]) dmap[pid] = {};
+        if (!dmap[pid][sid]) dmap[pid][sid] = {};
+        dmap[pid][sid][rd.reg_date] = String(rd.created_at || '');
+    });
+    return [dates_map, dmap];
+}
+function getClassRecordsMap(pids, classId, from, to) {   // [pid][student_id]={registered,registered_at,eval_value}；范围外登记视为未登记（评价内容不受影响）
+    var map = {}, pset = {};
+    pids.forEach(function (p) { pset[p] = true; });
+    var ranged = (from !== '' || to !== '');
+    var toExcl = to !== '' ? addDays(to, 1) : '';
+    D.records.forEach(function (r) {
+        var pid = parseInt(r.project_id, 10);
+        if (!pset[pid]) return;
+        var s = D.stuMap[parseInt(r.student_id, 10)];
+        if (!s || parseInt(s.class_id, 10) !== classId) return;
+        var row = { registered: parseInt(r.registered, 10) || 0, registered_at: String(r.registered_at || ''), eval_value: String(r.eval_value || '') };
+        if (ranged && row.registered === 1) {
+            var at = row.registered_at;
+            var inRange = at !== '' && (from === '' || at >= from) && (toExcl === '' || at < toExcl);
+            if (!inRange) { row.registered = 0; row.registered_at = ''; }
+        }
+        if (!map[pid]) map[pid] = {};
+        map[pid][parseInt(r.student_id, 10)] = row;
+    });
+    return map;
+}
+
+// ===== 登记矩阵：一个项目一张表（打卡项目=日期列✓矩阵，一次性=已登记（评价）） =====
+function buildClassMatrixSheets(ctx) {
+    var sheets = [];
+    ctx.projects.forEach(function (p) {
+        var pid = parseInt(p.id, 10);
+        var head = ['座号', '姓名', '编号'];
+        var rows;
+        if ((p.mode || 'count') === 'daily') {
+            var dates = ctx.dates_map[pid] || [];
+            dates.forEach(function (d) { head.push(d); });
+            rows = [head];
+            ctx.students.forEach(function (s) {
+                var line = [nz(s.seat_no), nz(s.name), nz(s.student_no)];
+                var dm = (ctx.dmap[pid] || {})[s.id] || {};
+                dates.forEach(function (d) { line.push(dm[d] !== undefined ? '✓' : ''); });
+                rows.push(line);
+            });
+        } else {
+            head.push(p.name);
+            rows = [head];
+            ctx.students.forEach(function (s) {
+                var rec = (ctx.rec_map[pid] || {})[s.id] || null;
+                rows.push([nz(s.seat_no), nz(s.name), nz(s.student_no),
+                    (rec && rec.registered === 1) ? (rec.eval_value ? '已登记（' + rec.eval_value + '）' : '已登记') : '未登记']);
+            });
+        }
+        sheets.push({ name: p.name, rows: rows });
+    });
+    return sheets;
+}
+// ===== 全部项目明细：是否登记/登记时间/评价内容三张分表（打卡项目按日期展开列） =====
+function buildClassDetailSheets(ctx) {
+    var col_meta = [];
+    ctx.projects.forEach(function (p) {
+        var pid = parseInt(p.id, 10);
+        if ((p.mode || 'count') === 'daily') {
+            (ctx.dates_map[pid] || []).forEach(function (d) { col_meta.push({ type: 'date', pid: pid, date: d, pname: p.name }); });
+        } else {
+            col_meta.push({ type: 'count', pid: pid, pname: p.name });
+        }
+    });
+    var reg_head = ['座号', '姓名', '编号'], time_head = ['座号', '姓名', '编号'];
+    col_meta.forEach(function (cm) {
+        var label = cm.type === 'date' ? (cm.pname + ' ' + cm.date) : cm.pname;
+        reg_head.push(label);
+        time_head.push(label);
+    });
+    var eval_head = ['座号', '姓名', '编号'];
+    ctx.projects.forEach(function (p) { eval_head.push(p.name); });
+    var reg_rows = [reg_head], time_rows = [time_head], eval_rows = [eval_head];
+    ctx.students.forEach(function (s) {
+        var reg = [nz(s.seat_no), nz(s.name), nz(s.student_no)];
+        var time = reg.slice();
+        col_meta.forEach(function (cm) {
+            if (cm.type === 'date') {
+                var dm = (ctx.dmap[cm.pid] || {})[s.id] || {};
+                reg.push(dm[cm.date] !== undefined ? '✓' : '');
+                time.push(dm[cm.date] !== undefined ? String(dm[cm.date]) : '');
+            } else {
+                var rec = (ctx.rec_map[cm.pid] || {})[s.id] || null;
+                reg.push(rec && rec.registered === 1 ? '✓' : '');
+                time.push(rec && rec.registered === 1 ? rec.registered_at : '');
+            }
+        });
+        reg_rows.push(reg);
+        time_rows.push(time);
+        var evalc = [nz(s.seat_no), nz(s.name), nz(s.student_no)];
+        ctx.projects.forEach(function (p) {
+            var rec2 = (ctx.rec_map[parseInt(p.id, 10)] || {})[s.id] || null;
+            evalc.push(rec2 ? rec2.eval_value : '');
+        });
+        eval_rows.push(evalc);
+    });
+    return [
+        { name: '是否登记', rows: reg_rows },
+        { name: '登记时间', rows: time_rows },
+        { name: '评价内容', rows: eval_rows }
+    ];
+}
+// ===== 全部学生：每位学生一张表，列出全部项目登记情况（打卡项目按日期展开） =====
+function buildClassStudentsSheets(ctx) {
+    var sheets = [];
+    ctx.students.forEach(function (s) {
+        var rows = [['项目', '日期', '是否登记']];
+        ctx.projects.forEach(function (p) {
+            var pid = parseInt(p.id, 10);
+            if ((p.mode || 'count') === 'daily') {
+                (ctx.dates_map[pid] || []).forEach(function (d) {
+                    var dm = (ctx.dmap[pid] || {})[s.id] || {};
+                    rows.push([p.name, d, dm[d] !== undefined ? '✓' : '']);
+                });
+            } else {
+                var rec = (ctx.rec_map[pid] || {})[s.id] || null;
+                rows.push([p.name, '', rec && rec.registered === 1 ? '已登记' : '未登记']);
+            }
+        });
+        var sname = (nz(s.seat_no) + ' ' + nz(s.name)).trim();
+        if (sname === '') sname = nz(s.name) !== '' ? nz(s.name) : '学生' + s.id;
+        sheets.push({ name: sname, rows: rows });
+    });
+    return sheets;
+}
+
+// ===== 下载分发（原 dl-link 点击 → 本地构建；dtype 全覆盖防未知导出类型） =====
+function localDownload(q) {
+    var dtype = String(q.dtype || '');
+    var id = parseInt(q.id, 10) || 0;
+    if (dtype === 'class' || dtype === 'class_detail' || dtype === 'class_students') {
+        var ctx = classExportCtx(id, q.from, q.to);
+        if (ctx.error) { showToast(esc(ctx.error), 'error'); return; }
+        var prefix = dtype === 'class' ? '班级导出' : (dtype === 'class_detail' ? '班级全部项目明细' : '班级全部学生');
+        var sheets = dtype === 'class' ? buildClassMatrixSheets(ctx)
+            : (dtype === 'class_detail' ? buildClassDetailSheets(ctx) : buildClassStudentsSheets(ctx));
+        outputExcelXml(prefix + '_' + ctx.klass.name + '_' + stamp() + dlSuffix(q.from, q.to) + '.xls', sheets);
+        return;
+    }
+    if (dtype === 'batch') { runBatchExport(q.ids, q.types, q.from, q.to); return; }
+    showToast('未知导出类型', 'error');
+}
+// dl-link 点击统一拦截（本地无 export.php，改为浏览器端构建下载并自动携带 from/to）
+document.addEventListener('click', function (e) {
+    var node = e.target;
+    while (node && node !== document) {
+        if (node.tagName === 'A' && node.classList.contains('dl-link')) break;
+        node = node.parentNode;
+    }
+    if (!node || node === document) return;
+    e.preventDefault();
+    var href = node.getAttribute('href') || '';
+    var q = {};
+    var qi = href.indexOf('?');
+    if (qi !== -1) {
+        href.slice(qi + 1).split('&').forEach(function (kv) {
+            if (!kv) return;
+            var p = kv.split('=');
+            q[decodeURIComponent(p[0])] = decodeURIComponent((p[1] || '').replace(/\+/g, ' '));
+        });
+    }
+    var r = rangeVals();
+    q.from = r.f; q.to = r.t;
+    localDownload(q);
+});
+
+// ===== 批量导出（多班 ZIP：JSZip 打包 + 导出说明.txt；单文件直下；无 JSZip 兜底合并工作簿） =====
+function runBatchExport(idsStr, typesStr, from, to) {
+    var TYPE_LABELS = { matrix: '登记矩阵', detail: '全部项目明细', students: '全部学生' };
+    var types = String(typesStr || '').split(/[\s,]+/).filter(function (t) { return TYPE_LABELS[t]; });
+    var seenIds = {}, ids = [];
+    String(idsStr || '').split(',').forEach(function (v) {
+        var n = parseInt(v, 10) || 0;
+        if (n > 0 && !seenIds[n]) { seenIds[n] = true; ids.push(n); }
+    });
+    if (!ids.length || !types.length) { showToast('请先选择班级与报表类型', 'error'); return; }
+    var files = {}, merged = [], okClasses = [], noData = [];
+    ids.forEach(function (cid) {
+        var ctx = classExportCtx(cid, from, to);
+        if (ctx.error) { noData.push(ctx.error + '（ID ' + cid + '）'); return; }
+        var sheets = [];
+        types.forEach(function (t) {
+            if (t === 'matrix') sheets = sheets.concat(buildClassMatrixSheets(ctx));
+            else if (t === 'detail') sheets = sheets.concat(buildClassDetailSheets(ctx));
+            else if (t === 'students') sheets = sheets.concat(buildClassStudentsSheets(ctx));
+        });
+        if (!sheets.length) { noData.push(ctx.klass.name + '（无报表数据）'); return; }
+        files['班级导出_' + ctx.klass.name + '_' + stamp() + dlSuffix(from, to) + '.xls'] = excelXmlString(sheets);
+        sheets.forEach(function (sh) { merged.push({ name: ctx.klass.name + '·' + sh.name, rows: sh.rows }); });
+        okClasses.push(ctx.klass.name + '（' + sheets.length + '张表）');
+    });
+    var names = Object.keys(files);
+    if (!names.length) {
+        showToast(esc('选中的班级均无可导出数据' + (noData.length ? ('：' + noData.join('；')) : '')), 'error');
+        return;
+    }
+    // 仅一个文件：直接下载该工作簿
+    if (names.length === 1) { downloadBlob(names[0], new Blob([files[names[0]]], { type: 'application/vnd.ms-excel;charset=utf-8' })); return; }
+    // 兜底：无 JSZip 时合并为单一工作簿（工作表名加「班级·」前缀）
+    if (typeof JSZip === 'undefined') {
+        outputExcelXml('统计报表合并导出_' + stamp() + dlSuffix(from, to) + '.xls', merged);
+        return;
+    }
+    var zip = new JSZip();
+    var label = (from !== '' || to !== '') ? (from + ' ~ ' + (to !== '' ? to : '今天')) : '全部时间';
+    var readme = '统计报表批量导出\r\n'
+        + '生成时间：' + nowLabel() + '\r\n'
+        + '统计范围：' + label + '\r\n'
+        + '报表类型：' + types.map(function (t) { return TYPE_LABELS[t]; }).join('、') + '\r\n'
+        + '包含班级（' + okClasses.length + '）：' + okClasses.join('；') + '\r\n'
+        + (noData.length ? ('未包含：' + noData.join('；') + '\r\n') : '');
+    zip.file('导出说明.txt', '\uFEFF' + readme);
+    names.forEach(function (n) { zip.file(n, files[n]); });
+    zip.generateAsync({ type: 'blob' }).then(function (blob) {
+        downloadBlob('统计报表批量导出_' + stamp() + dlSuffix(from, to) + '.zip', blob);
+    }).catch(function () {
+        outputExcelXml('统计报表合并导出_' + stamp() + dlSuffix(from, to) + '.xls', merged);
+    });
+}
+
+// ===== 页面渲染 =====
+function renderClassTable() {
+    var list = sortedClasses();
+    var tbody = document.getElementById('clsTbody');
+    var chips = document.getElementById('batClsChips');
+    var box = document.getElementById('batchBox');
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="3" style="padding:12px;color:#999;">暂无可见班级</td></tr>';
+        chips.innerHTML = '';
+        if (box) box.style.display = 'none';
+        return;
+    }
+    var htmlR = '', htmlC = '';
+    list.forEach(function (c) {
+        var cid = parseInt(c.id, 10);
+        var cnt = 0;
+        D.students.forEach(function (s) { if (parseInt(s.class_id, 10) === cid) cnt++; });
+        var label = esc(nz(c.name));
+        htmlR += '<tr>'
+            + '<td style="padding:7px 10px;border-bottom:1px solid #eef0f6;">' + label + '</td>'
+            + '<td style="padding:7px 10px;border-bottom:1px solid #eef0f6;color:#888;">' + cnt + '</td>'
+            + '<td style="padding:7px 10px;border-bottom:1px solid #eef0f6;display:flex;gap:6px;flex-wrap:wrap;">'
+            + '<a class="btn btn-sm btn-outline dl-link" style="text-decoration:none;"'
+            + ' href="export.php?action=download&dtype=class&id=' + cid + '"'
+            + ' title="学生 × 项目登记矩阵（每个项目一张表）">📋 登记矩阵</a>'
+            + '<a class="btn btn-sm btn-outline dl-link" style="text-decoration:none;"'
+            + ' href="export.php?action=download&dtype=class_detail&id=' + cid + '"'
+            + ' title="是否登记 / 登记时间 / 评价内容 三张分表">📑 全部项目明细</a>'
+            + '<a class="btn btn-sm btn-outline dl-link" style="text-decoration:none;"'
+            + ' href="export.php?action=download&dtype=class_students&id=' + cid + '"'
+            + ' title="每位学生一张表列出全部项目登记情况">👥 全部学生</a>'
+            + '</td></tr>';
+        htmlC += '<label class="chipbox"><input type="checkbox" class="bat-cls" value="' + cid + '"'
+            + ' onchange="this.parentNode.classList.toggle(\'on\',this.checked)" autocomplete="off">' + label + '</label>';
+    });
+    tbody.innerHTML = htmlR;
+    chips.innerHTML = htmlC;
+    if (box) box.style.display = '';
+    updateBatTip();
+}
+function renderOnline() {
+    var list = sortedClasses();
+    var clsWrap = document.getElementById('onlineCls');
+    var stdWrap = document.getElementById('stdPanel');
+    if (!list.length) {
+        var empty = '<span style="color:#999;font-size:13px;">暂无可见班级</span>';
+        clsWrap.innerHTML = empty;
+        stdWrap.innerHTML = empty;
+        return;
+    }
+    var h1 = '';
+    list.forEach(function (c) {
+        var cid = parseInt(c.id, 10);
+        var name = nz(c.name);
+        h1 += '<a class="btn btn-sm btn-outline" style="text-decoration:none;" href="stats.html?class_id=' + cid + '"'
+            + ' onclick="openReport(this.href, \'📊 ' + esc(addSlashes(name)) + ' · 登记统计\'); return false;">📊 ' + esc(name) + '</a>';
+    });
+    clsWrap.innerHTML = h1;
+    var h2 = '';
+    list.forEach(function (c) {
+        var cid = parseInt(c.id, 10);
+        var name = nz(c.name);
+        var stus = D.students.filter(function (s) { return parseInt(s.class_id, 10) === cid; })
+            .sort(function (a, b) { return a.class_id - b.class_id || seatNum(a.seat_no) - seatNum(b.seat_no) || a.id - b.id; });
+        h2 += '<p style="font-weight:500;margin:12px 0 6px;color:#555;">📊 ' + esc(name) + '（' + stus.length + ' 人）</p>'
+            + '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+        if (!stus.length) h2 += '<span style="color:#999;font-size:13px;">暂无学生</span>';
+        stus.forEach(function (s) {
+            var seat = nz(s.seat_no);
+            var sname = nz(s.name);
+            h2 += '<a class="btn btn-sm btn-outline" style="text-decoration:none;"'
+                + ' href="stats.html?class_id=' + cid + '&student_id=' + s.id + '"'
+                + ' title="查看该生各项目登记/评价统计"'
+                + ' onclick="openReport(this.href, \'👤 ' + esc(addSlashes((seat !== '' ? seat + ' · ' : '') + sname)) + ' · 登记记录\'); return false;">'
+                + esc(seat) + ' · ' + esc(sname) + '</a>';
+        });
+        h2 += '</div>';
+    });
+    stdWrap.innerHTML = h2;
+}
+
+// ===== 启动 =====
+function boot() {
+    Promise.all([
+        DB.all('classes'), DB.all('students'), DB.all('projects'),
+        DB.all('records'), DB.all('record_days'), DB.all('settings')
+    ]).then(function (res) {
+        D.classes = res[0]; D.students = res[1]; D.projects = res[2];
+        D.records = res[3]; D.record_days = res[4];
+        D.settings = {};
+        (res[5] || []).forEach(function (s) { D.settings[s.skey] = s.svalue; });
+        D.stuMap = {}; D.projMap = {};
+        D.students.forEach(function (s) { D.stuMap[parseInt(s.id, 10)] = s; });
+        D.projects.forEach(function (p) { D.projMap[parseInt(p.id, 10)] = p; });
+        initRange();
+        renderClassTable();
+        renderOnline();
+        fetchDash();
+    }).catch(function (e) {
+        var m = document.getElementById('dashMsg');
+        if (m) { m.style.display = ''; m.textContent = '数据加载失败：' + esc(String(e && e.message || e)); }
+    });
+}
+boot();
+</script>
+</div>
+<style>
+.help-fab { position: fixed; top: 70px; right: 16px; z-index: 1100; width: 38px; height: 38px;
+    border-radius: 50%; border: none; background: #667eea; color: #fff; font-size: 20px; font-weight: bold;
+    cursor: pointer; box-shadow: 0 2px 10px rgba(102,126,234,0.45); }
+.help-fab:hover { background: #5568d3; }
+.help-body h4 { margin: 14px 0 6px; font-size: 14px; color: #667eea; }
+.help-body ul { margin: 0 0 8px; padding-left: 20px; }
+.help-body li { font-size: 13px; color: #555; line-height: 1.9; }
+</style>
+<button type="button" class="help-fab" onclick="togglePageHelp(true)" title="操作帮助" aria-label="操作帮助">?</button>
+<div class="modal-mask" id="pageHelpModal" onclick="if(event.target===this)togglePageHelp(false)">
+    <div class="modal" style="max-width:640px;">
+        <h3>❓ 统计报表中心 · 操作帮助</h3>
+        <div class="help-body">
+                        <h4>📈 数据总览</h4>
+            <ul>
+                <li><b>KPI 卡片</b>：班级总数 / 学生总数 / 项目总数 / 登记·打卡人次 / 评价人次 / 登记人次÷学生数</li><li><b>四张图表</b>（ECharts）：各班级登记人次与登记率（柱+线）、每日动态（打卡/一次性登记堆叠柱，超40天可缩放拖动）、评价内容分布（环形 Top 10）、年段对比（登记率）</li><li>图表随顶部「导出时间范围」实时联动；每张图右上角 📷 可保存为图片；口径与导出一致（一次性按登记时间、打卡按打卡日期过滤）</li>            </ul>
+                        <h4>📤 报表导出（Tab 分区）</h4>
+            <ul>
+                <li><b>🏫 班级报表</b>：单班三按钮 —— <b>登记矩阵</b>（学生 × 项目矩阵 Excel，每项目一张表，打卡项目按日期展开 ✓）/ <b>全部项目明细</b>（是否登记 / 登记时间 / 评价内容 三张分表）/ <b>全部学生</b>（每位学生一张表）</li><li><b>📦 批量导出</b>：勾选多个班级 + 报表类型 → 打包 ZIP 下载（每个班级一个独立 Excel 工作簿 + 导出说明.txt）；仅一个文件时直接下载工作簿</li>            </ul>
+                        <h4>📅 导出时间范围</h4>
+            <ul>
+                <li>选择开始 / 结束日期后，图表与所有导出按钮自动按该范围统计；留空 = 全部时间</li><li>快捷按钮：<b>本周</b>（周一～周日）/ <b>上周</b> / <b>本月</b> / <b>全部时间</b>；文件名自动附带范围后缀</li><li>范围口径：一次性项目按「登记时间」落范围；打卡项目按「打卡日期」落范围；范围外的登记在该导出中按未登记计</li>            </ul>
+                        <h4>📊 在线统计（默认折叠）</h4>
+            <ul>
+                <li>点击班级按钮在<b>弹窗</b>中打开该班登记统计页（各项目登记情况、每日打卡、学生明细与图表，支持条形 / 折线 / 饼图切换）</li><li>展开「学生登记统计」后可按学生查看各项目登记 / 评价 / 打卡天数明细，并支持导出该生登记情况（stats.html 学生统计页）</li>            </ul>
+                    </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="togglePageHelp(false)">我知道了</button>
+        </div>
+    </div>
+</div>
+<style>
+/* ===== 全局操作反馈 toast：页面下方中央、黑色（同 omr_scan.php）；3 秒自动消失，sticky=重要提示需点击才消失 ===== */
+.toast-wrap { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:3000; display:flex; flex-direction:column-reverse; gap:8px; align-items:center; max-width:92vw; pointer-events:none; }
+.toast { pointer-events:auto; background:rgba(40,44,60,0.92); color:#fff; box-shadow:0 8px 24px rgba(0,0,0,0.28); border-radius:10px; padding:10px 16px; font-size:14px; line-height:1.6; max-width:92vw; word-break:break-all; cursor:pointer; animation:toastIn .22s ease; }
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@media (max-width: 768px) { .toast-wrap { bottom:76px; } }
+/* ===== 行内小问号按钮（点击在问号旁弹出说明浮层；与右上角大 ? 操作帮助并存） ===== */
+.hint-q { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; min-width:16px; border-radius:50%; background:#667eea; color:#fff; font-size:11px; font-weight:bold; line-height:1; border:none; cursor:pointer; vertical-align:middle; margin:0 0 2px 6px; padding:0; box-shadow:0 1px 4px rgba(102,126,234,0.4); font-family:inherit; }
+.hint-q:hover { background:#5568d3; }
+/* 小问号说明浮层：紧贴问号按钮（优先下方，放不下翻转到上方），点浮层外/再点同一个小问号收起 */
+.hint-pop { position:fixed; z-index:4000; background:#fff; color:#333; border:1px solid #e3e6f0; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.18); padding:12px 14px; font-size:13px; line-height:1.8; text-align:left; max-width:340px; max-height:70vh; overflow-y:auto; word-break:break-all; animation:toastIn .18s ease; }
+.hint-pop b { color:#667eea; }
+@media (max-width: 768px) { .hint-pop { max-width:92vw; } }
+</style>
+<script>
+// ===== 全局操作反馈 toast：showToast(msg, type, sticky) 页面下方中央黑色（同 omr_scan.php）；sticky=true 重要提示需点击才消失 =====
+function showToast(msg, type, sticky) {
+    var wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.className = 'toast-wrap'; document.body.appendChild(wrap); }
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' toast-' + type : '');
+    t.innerHTML = msg;
+    t.addEventListener('click', function () { dismiss(); });
+    wrap.appendChild(t);
+    var tm = null;
+    function dismiss() { if (tm) clearTimeout(tm); if (t.parentNode) t.parentNode.removeChild(t); }
+    if (!sticky) tm = setTimeout(dismiss, 3000);
+    return t;
+}
+// ===== 行内小问号说明：toggleHint(event, 'HTML 说明文字') → 问号旁浮层（优先下方，放不下翻转到上方；点浮层外/再点同一个小问号收起） =====
+function hintPopPos(p) {
+    var b = p.__src; if (!b) return;
+    var r = b.getBoundingClientRect();
+    var pw = p.offsetWidth, ph = p.offsetHeight;
+    var left = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, window.innerWidth - pw - 8));
+    var top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;   // 下方放不下：翻转到上方
+    p.style.left = left + 'px';
+    p.style.top = Math.max(8, top) + 'px';
+}
+function hintPopClose() {
+    var p = document.getElementById('hintPop');
+    if (p && p.parentNode) p.parentNode.removeChild(p);
+}
+function toggleHint(ev, html) {
+    ev.stopPropagation();
+    var b = ev.currentTarget;
+    var old = document.getElementById('hintPop');
+    if (old && old.__src === b) { hintPopClose(); return; }   // 再点同一个小问号：收起
+    hintPopClose();
+    var p = document.createElement('div');
+    p.id = 'hintPop';
+    p.className = 'hint-pop';
+    p.innerHTML = html;
+    p.__src = b;
+    p.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.body.appendChild(p);
+    hintPopPos(p);
+    window.addEventListener('scroll', hintPopSync, true);
+    window.addEventListener('resize', hintPopSync);
+}
+// 滚动/缩放时跟随问号按钮重新定位；按钮已从 DOM 移除（如弹窗关闭）则连带收起
+function hintPopSync() {
+    var p = document.getElementById('hintPop');
+    if (!p) return;
+    if (!p.__src || !p.__src.isConnected) { hintPopClose(); return; }
+    hintPopPos(p);
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.hint-pop')) return;
+    hintPopClose();
+});
+</script>
+<script>
+function togglePageHelp(open) {
+    var m = document.getElementById('pageHelpModal');
+    if (m) m.classList.toggle('show', open);
+}
+// 所有弹窗统一注入「最大化 / 还原」+「✕ 关闭」按钮（顺序：最大化 关闭；PC 自动宽高、手机 90%，均可一键撑满）
+(function () {
+    function initModalMaxBtns() {
+        document.querySelectorAll('.modal-mask .modal').forEach(function (m) {
+            if (m.querySelector('.modal-max-btn')) return;
+            var max = document.createElement('button');
+            max.type = 'button';
+            max.className = 'modal-max-btn';
+            max.title = '最大化 / 还原';
+            max.innerHTML = '&#x2922;';
+            max.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var maxed = m.classList.toggle('modal-max');
+                max.innerHTML = maxed ? '&#x2923;' : '&#x2922;';
+            });
+            m.appendChild(max);
+            // ✕ 关闭按钮（位于最大化右侧）：关闭所属弹窗，还原最大化状态并广播 modalclosed
+            var close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'modal-close-btn';
+            close.title = '关闭';
+            close.setAttribute('aria-label', '关闭');
+            close.innerHTML = '&#x2715;';
+            close.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var mask = m.closest('.modal-mask');
+                m.classList.remove('modal-max');
+                max.innerHTML = '&#x2922;';
+                if (mask) {
+                    mask.classList.remove('show');
+                    mask.dispatchEvent(new CustomEvent('modalclosed', { bubbles: false }));
+                }
+            });
+            m.appendChild(close);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initModalMaxBtns);
+    } else {
+        initModalMaxBtns();
+    }
+})();
+</script>
+</body>
+</html>

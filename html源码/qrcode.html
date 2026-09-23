@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>二维码生成 - 潜记二维码作业登记系统</title>
+    <link rel="stylesheet" href="css/style.css?v=20260915">
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="favicon.ico"/>
+    <script src="js/db.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/sw_boot.js"></script>
+</head>
+<body>
+<nav class="navbar">
+        <div class="navbar-inner">
+        <a class="navbar-brand" href="index.html">潜记 · 作业登记</a>
+        <div class="navbar-menu">
+                                    <a href="index.html" class="active">班级列表</a>
+                        <a href="export.html">统计报表</a>
+                    </div>
+        <!-- 移动端：汉堡按钮 → 左侧抽屉菜单 -->
+        <button type="button" class="nav-burger" onclick="toggleDrawer(true)" aria-label="打开菜单">☰</button>
+    </div>
+</nav>
+<!-- 移动端左侧抽屉菜单 -->
+<div class="drawer-mask" id="drawerMask" onclick="toggleDrawer(false)"></div>
+<aside class="side-drawer" id="sideDrawer" aria-label="导航菜单">
+    <div class="drawer-head">
+        <b>潜记 · 作业登记</b>
+        <button type="button" class="drawer-close" onclick="toggleDrawer(false)" aria-label="关闭菜单">✕</button>
+    </div>
+        <nav class="drawer-nav">
+                <a href="index.html" class="active">班级列表</a>
+                <a href="export.html">统计报表</a>
+            </nav>
+</aside>
+<script>
+function toggleDrawer(open) {
+    var d = document.getElementById('sideDrawer');
+    var m = document.getElementById('drawerMask');
+    if (!d || !m) return;
+    d.classList.toggle('open', open);
+    m.classList.toggle('show', open);
+}
+</script>
+<!-- 移动端底部导航栏（PC 隐藏，≤768px 显示）：随上下文变化（默认：班级列表/统计报表/个人中心；班级：班级情况/学生列表/班级统计/个人中心；项目：项目情况/扫码登记/项目统计/个人中心）。加入学校/后台管理仅 PC 显示 -->
+<nav class="bottom-nav">
+        <a class="bottom-nav-item active" href="index.html">
+        <span class="bottom-nav-icon">📘</span>
+        <span class="bottom-nav-text">班级列表</span>
+    </a>
+        <a class="bottom-nav-item" href="export.html">
+        <span class="bottom-nav-icon">📊</span>
+        <span class="bottom-nav-text">统计报表</span>
+    </a>
+    </nav>
+<div class="app-content">
+<a href="students.html?class_id=" id="backLink" style="display:inline-block;margin-bottom:15px;color:#667eea;text-decoration:none;">← 返回学生管理</a>
+
+<div class="panel">
+    <h3 style="cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;" onclick="toggleImportQr()" title="点击展开/收起">
+        <span id="impqr_arrow" style="font-size:12px;color:#999;">▶</span> 班级导入二维码<span class="form-hint" style="font-weight:normal;">（默认收起，点击展开）</span>
+    </h3>
+    <div id="impqr_body" style="display:none;">
+    <p class="tip">班级码导入说明<button type="button" class="hint-q" onclick="toggleHint(event, '<b>班级导入二维码说明</b><br>· 名单内容存入数据库，二维码只编码提取链接（学生再多也能清晰扫码）<br>· 也可凭下方<b>提取码</b>在「学生名单 → 扫码导入班级码」中直接导入')">?</button></p>
+    <div id="impqr_inner"><p class="tip" style="color:#98a0b3;">加载中…</p></div>
+    </div>
+</div>
+
+<div class="panel">
+    <h3>学生个人二维码（一人一码）</h3>
+    <p class="tip">个人码使用说明<button type="button" class="hint-q" onclick="toggleHint(event, '<b>学生个人二维码说明</b><br>· 打印后裁剪，贴在每个学生的作业本上<br>· 作业批改后在「扫码登记」中扫描即可完成登记（也可用【潜记】APP扫描，编码格式 djxh+编号 兼容）<br>· <b>「个人单页」</b>列可对单个学生直接打印 / 导出 PDF / 导出 Word 其整页重复二维码（新窗口打开，自动执行）')">?</button></p>
+    <div class="toolbar">
+        <a href="print.html?class_id=&type=1" id="lnkP1" target="_blank" class="btn btn-sm">打印全班二维码（表格版）</a>
+        <a href="print.html?class_id=&type=2" id="lnkP2" target="_blank" class="btn btn-sm">打印个人单页二维码</a>
+                <a href="quiz_cards.html?class_id=&mode=raise" id="lnkQ2" target="_blank" class="btn btn-sm btn-success" onclick="return checkRaiseSeats()">🖨 打印全班举牌卡</a>
+            </div>
+    <div id="stuArea"><p class="tip" style="color:#98a0b3;">加载中…</p></div>
+    </div>
+
+<!-- 提取链接内容预览弹层（本地化：原 qr_fetch.php?c=提取码 打开即展示名单明文） -->
+<div class="modal-mask" id="previewModal" onclick="if(event.target===this)this.classList.remove('show')">
+    <div class="modal">
+        <h3>📋 提取链接内容（提取码 <span id="previewCode"></span>）</h3>
+        <div style="margin:12px 0;"><pre id="previewContent" style="white-space:pre-wrap;word-break:break-all;background:#f6f7fd;border:1px solid #e3e6f0;border-radius:8px;padding:10px;max-height:50vh;overflow:auto;font-family:Consolas,monospace;font-size:12px;color:#333;margin:0;">-</pre></div>
+        <p class="tip">可复制后到「学生名单 → 扫码导入班级码」粘贴导入。</p>
+        <div class="modal-actions">
+            <button type="button" class="btn btn-outline" onclick="copyPreview()">复制内容</button>
+            <button type="button" class="btn" onclick="document.getElementById('previewModal').classList.remove('show')">关闭</button>
+        </div>
+    </div>
+</div>
+
+<script src="assets/qrcode.min.js"></script>
+<script>
+var CLASS_ID = parseInt(new URLSearchParams(location.search).get('class_id')) || 0;
+function esc(str) {
+    return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// 举牌卡打印前校验：座号非 1-255 自然数 / 为空 / 重复的学生无法生成有效举牌卡（本地按名单预检，同原服务端口径）
+var RAISE_BAD = [];
+function checkRaiseSeats() {
+    if (!RAISE_BAD.length) return true;
+    var show = RAISE_BAD.slice(0, 8).join('、') + (RAISE_BAD.length > 8 ? ' 等' : '');
+    showToast('有 ' + RAISE_BAD.length + ' 名学生的座号不是 1-255 的自然数、为空或重复，无法生成举牌卡：\n' + show + '\n请先在「学生管理」中修正座号后再打印。', 'error');
+    return false;
+}
+// 计算 RAISE_BAD（原 qrcode.php 服务端预检逻辑：禁用学生跳过；座号需 1-255 自然数且不为空、不重复）
+function calcRaiseBad(students) {
+    var bad = [], seen = {};
+    students.forEach(function (rs) {
+        if (rs.disabled) return;
+        var rsn = String(rs.seat_no == null ? '' : rs.seat_no).trim();
+        if (rsn === '' || String(parseInt(rsn, 10)) !== rsn || parseInt(rsn, 10) < 1 || parseInt(rsn, 10) > 255) {
+            bad.push(rs.name + '（座号：' + (rsn === '' ? '空' : rsn) + '）');
+        } else if (seen[rsn] !== undefined) {
+            bad.push(rs.name + '（座号 ' + rsn + ' 与「' + seen[rsn] + '」重复）');
+        } else {
+            seen[rsn] = rs.name;
+        }
+    });
+    return bad;
+}
+// 座号排序键（原 CAST(seat_no AS UNSIGNED)：非数字按 0，再按 id）
+function seatKey(s) {
+    var n = parseInt(String(s.seat_no == null ? '' : s.seat_no).trim(), 10);
+    return isNaN(n) ? 0 : n;
+}
+
+// 班级导入二维码：默认折叠，首次展开时才生成（隐藏容器内生成尺寸不可靠）
+var impqrGenerated = false;
+function toggleImportQr() {
+    var body = document.getElementById('impqr_body');
+    var arrow = document.getElementById('impqr_arrow');
+    var show = body.style.display === 'none';
+    body.style.display = show ? '' : 'none';
+    arrow.textContent = show ? '▼' : '▶';
+    if (show && !impqrGenerated) {
+        genClassQr();
+        impqrGenerated = true;
+    }
+}
+// 生成班级导入二维码（内容为提取链接，名单多也不会编码失败）
+function genClassQr() {
+    var textEl = document.getElementById('class_qr_text');
+    if (textEl && textEl.textContent) {
+        new QRCode(document.getElementById('qrcode_class'), {
+            text: textEl.textContent,
+            width: 300,
+            height: 300,
+            correctLevel: QRCode.CorrectLevel.M
+        });
+    }
+}
+// 复制提取码
+function copyImportCode() {
+    var code = document.getElementById('import_code').textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).then(function () { showToast('提取码已复制：' + code, 'success', true); });
+    } else {
+        var inp = document.createElement('textarea');
+        inp.value = code;
+        document.body.appendChild(inp);
+        inp.select();
+        document.execCommand('copy');
+        document.body.removeChild(inp);
+        showToast('提取码已复制：' + code, 'success', true);
+    }
+}
+// 预览提取链接（本地化：原版打开 qr_fetch.php 展示 bjdl 明文，此处弹窗展示同一内容）
+function previewImportLink(ev) {
+    ev.preventDefault();
+    var code = document.getElementById('import_code').textContent;
+    DB.first('import_payloads', 'code', code).then(function (row) {
+        document.getElementById('previewCode').textContent = code;
+        document.getElementById('previewContent').textContent = row && row.content ? row.content : '提取码无效或名单为空';
+        document.getElementById('previewModal').classList.add('show');
+    });
+    return false;
+}
+function copyPreview() {
+    var txt = document.getElementById('previewContent').textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(function () { showToast('内容已复制', 'success', true); });
+    } else {
+        var inp = document.createElement('textarea');
+        inp.value = txt;
+        document.body.appendChild(inp);
+        inp.select();
+        document.execCommand('copy');
+        document.body.removeChild(inp);
+        showToast('内容已复制', 'success', true);
+    }
+}
+// 生成学生个人二维码预览
+function genMiniQr() {
+    document.querySelectorAll('.qr-mini').forEach(function(el) {
+        new QRCode(el, {
+            text: el.dataset.content,
+            width: 80,
+            height: 80,
+            correctLevel: QRCode.CorrectLevel.L
+        });
+    });
+}
+
+// ===== 本地渲染：班级导入二维码区 + 学生个人码表（原 qrcode.php 服务端渲染 IndexedDB 化） =====
+function render(students) {
+    var clsName = (window.__CLS && window.__CLS.name) || '';
+    document.title = '二维码生成 - ' + clsName + ' - 潜记二维码作业登记系统';
+    // 工具栏/返回链接补 class_id
+    var back = document.getElementById('backLink');
+    back.setAttribute('href', 'students.html?class_id=' + CLASS_ID);
+    ['lnkP1', 'lnkP2', 'lnkQ2'].forEach(function (id) {
+        var a = document.getElementById(id);
+        a.setAttribute('href', a.getAttribute('href').replace('class_id=', 'class_id=' + CLASS_ID));
+    });
+    RAISE_BAD = calcRaiseBad(students);
+
+    // —— 班级导入二维码区 ——
+    var inner = document.getElementById('impqr_inner');
+    if (!students.length) {
+        inner.innerHTML = '<div class="alert alert-info">该班级暂无学生，请先<a href="students.html?class_id=' + CLASS_ID + '" style="color:#667eea;">导入学生名单</a>。</div>';
+    } else {
+        QJ.get_class_import_payload(CLASS_ID, students).then(function (payload) {
+            var base = location.href.substring(0, location.href.lastIndexOf('/') + 1);
+            var importUrl = base + 'qr_fetch.php?c=' + payload.code;
+            inner.innerHTML = '<div class="qr-center">'
+                + '<div id="qrcode_class" class="qrcode"></div>'
+                + '<div class="qr-text" id="class_qr_text">' + esc(importUrl) + '</div>'
+                + '<div style="margin:10px 0;display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;">'
+                + '<span style="font-size:15px;color:#666;">提取码</span>'
+                + '<b id="import_code" style="font-size:26px;letter-spacing:4px;color:#667eea;font-family:Consolas,monospace;">' + esc(payload.code) + '</b>'
+                + '<button type="button" class="btn btn-sm btn-outline" onclick="copyImportCode()">复制提取码</button>'
+                + '<a href="#" onclick="return previewImportLink(event)" class="btn btn-sm btn-outline">预览提取链接</a>'
+                + '</div>'
+                + '<p class="tip">导入方式说明<button type="button" class="hint-q" onclick="toggleHint(event, \'<b>两种导入方式</b><br>· ①【潜记】APP：进入「班级」-「名单」后，点击右上方图标，选择「扫码导入名单」后扫描上方二维码即可导入<br>· ② 本系统：在目标班级的「学生名单 → 扫码导入班级码」中扫描上方二维码，或直接输入 8 位提取码，选择「附加导入」或「覆盖导入」\')">?</button></p>'
+                + '</div>';
+        });
+    }
+
+    // —— 学生个人码表 ——
+    var area = document.getElementById('stuArea');
+    if (!students.length) {
+        area.innerHTML = '<div class="alert alert-info">该班级暂无学生。</div>';
+        return;
+    }
+    var h = '<div class="table-wrap"><table class="data-table">'
+        + '<thead><tr><th>座号</th><th>姓名</th><th>编号</th><th>二维码内容</th><th>预览</th><th>个人单页</th></tr></thead><tbody>';
+    students.forEach(function (s) {
+        var content = QJ.build_student_qr_content(s.student_no);
+        h += '<tr>'
+            + '<td>' + esc(s.seat_no) + '</td>'
+            + '<td>' + esc(s.name) + '</td>'
+            + '<td>' + esc(s.student_no) + '</td>'
+            + '<td style="font-family:Consolas,monospace;">' + esc(content) + '</td>'
+            + '<td><div class="qr-mini" data-content="' + esc(content) + '"></div></td>'
+            + '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">'
+            + '<a href="print.html?class_id=' + CLASS_ID + '&type=2&student_id=' + s.id + '&act=print" target="_blank" class="btn btn-sm btn-outline" style="text-decoration:none;">🖨 打印</a>'
+            + '<a href="print.html?class_id=' + CLASS_ID + '&type=2&student_id=' + s.id + '&act=pdf" target="_blank" class="btn btn-sm btn-outline" style="text-decoration:none;">⬇ PDF</a>'
+            + '<a href="print.html?class_id=' + CLASS_ID + '&type=2&student_id=' + s.id + '&act=word" target="_blank" class="btn btn-sm btn-outline" style="text-decoration:none;">⬇ Word</a>'
+            + '</div></td></tr>';
+    });
+    h += '</tbody></table></div>';
+    area.innerHTML = h;
+    genMiniQr();
+}
+
+DB.get('classes', CLASS_ID).then(function (cls) {
+    if (!cls || cls.deleted_at) { location.href = 'classes.html'; return; }
+    window.__CLS = cls;
+    return DB.by('students', 'class_id', CLASS_ID).then(function (sts) {
+        sts.sort(function (a, b) { return seatKey(a) - seatKey(b) || (a.id - b.id); });
+        render(sts);
+    });
+});
+</script>
+</div>
+<style>
+/* ===== 全局操作反馈 toast：页面下方中央、黑色（同 omr_scan.php）；3 秒自动消失，sticky=重要提示需点击才消失 ===== */
+.toast-wrap { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:3000; display:flex; flex-direction:column-reverse; gap:8px; align-items:center; max-width:92vw; pointer-events:none; }
+.toast { pointer-events:auto; background:rgba(40,44,60,0.92); color:#fff; box-shadow:0 8px 24px rgba(0,0,0,0.28); border-radius:10px; padding:10px 16px; font-size:14px; line-height:1.6; max-width:92vw; word-break:break-all; cursor:pointer; animation:toastIn .22s ease; }
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@media (max-width: 768px) { .toast-wrap { bottom:76px; } }
+/* ===== 行内小问号按钮（点击在问号旁弹出说明浮层；与右上角大 ? 操作帮助并存） ===== */
+.hint-q { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; min-width:16px; border-radius:50%; background:#667eea; color:#fff; font-size:11px; font-weight:bold; line-height:1; border:none; cursor:pointer; vertical-align:middle; margin:0 0 2px 6px; padding:0; box-shadow:0 1px 4px rgba(102,126,234,0.4); font-family:inherit; }
+.hint-q:hover { background:#5568d3; }
+/* 小问号说明浮层：紧贴问号按钮（优先下方，放不下翻转到上方），点浮层外/再点同一个小问号收起 */
+.hint-pop { position:fixed; z-index:4000; background:#fff; color:#333; border:1px solid #e3e6f0; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.18); padding:12px 14px; font-size:13px; line-height:1.8; text-align:left; max-width:340px; max-height:70vh; overflow-y:auto; word-break:break-all; animation:toastIn .18s ease; }
+.hint-pop b { color:#667eea; }
+@media (max-width: 768px) { .hint-pop { max-width:92vw; } }
+</style>
+<script>
+// ===== 全局操作反馈 toast：showToast(msg, type, sticky) 页面下方中央黑色（同 omr_scan.php）；sticky=true 重要提示需点击才消失 =====
+function showToast(msg, type, sticky) {
+    var wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.className = 'toast-wrap'; document.body.appendChild(wrap); }
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' toast-' + type : '');
+    t.innerHTML = msg;
+    t.addEventListener('click', function () { dismiss(); });
+    wrap.appendChild(t);
+    var tm = null;
+    function dismiss() { if (tm) clearTimeout(tm); if (t.parentNode) t.parentNode.removeChild(t); }
+    if (!sticky) tm = setTimeout(dismiss, 3000);
+    return t;
+}
+// 页面内 PHP 渲染的 .alert-success/.alert-error/.alert-danger 横幅自动转浮窗（error 需点击关闭；info/warning 常驻说明保留横幅）
+(function () {
+    document.querySelectorAll('.alert.alert-success, .alert.alert-error, .alert.alert-danger').forEach(function (el) {
+        var type = el.classList.contains('alert-success') ? 'success' : 'error';
+        showToast(el.innerHTML, type, type === 'error');
+        el.style.display = 'none';
+    });
+})();
+// ===== 行内小问号说明：toggleHint(event, 'HTML 说明文字') → 问号旁浮层（优先下方，放不下翻转到上方；点浮层外/再点同一个小问号收起） =====
+function hintPopPos(p) {
+    var b = p.__src; if (!b) return;
+    var r = b.getBoundingClientRect();
+    var pw = p.offsetWidth, ph = p.offsetHeight;
+    var left = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, window.innerWidth - pw - 8));
+    var top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;   // 下方放不下：翻转到上方
+    p.style.left = left + 'px';
+    p.style.top = Math.max(8, top) + 'px';
+}
+function hintPopClose() {
+    var p = document.getElementById('hintPop');
+    if (p && p.parentNode) p.parentNode.removeChild(p);
+}
+function toggleHint(ev, html) {
+    ev.stopPropagation();
+    var b = ev.currentTarget;
+    var old = document.getElementById('hintPop');
+    if (old && old.__src === b) { hintPopClose(); return; }   // 再点同一个小问号：收起
+    hintPopClose();
+    var p = document.createElement('div');
+    p.id = 'hintPop';
+    p.className = 'hint-pop';
+    p.innerHTML = html;
+    p.__src = b;
+    p.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.body.appendChild(p);
+    hintPopPos(p);
+    window.addEventListener('scroll', hintPopSync, true);
+    window.addEventListener('resize', hintPopSync);
+}
+// 滚动/缩放时跟随问号按钮重新定位；按钮已从 DOM 移除（如弹窗关闭）则连带收起
+function hintPopSync() {
+    var p = document.getElementById('hintPop');
+    if (!p) return;
+    if (!p.__src || !p.__src.isConnected) { hintPopClose(); return; }
+    hintPopPos(p);
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.hint-pop')) return;
+    hintPopClose();
+});
+// ===== 全局「⚙ 管理 ▾」二级菜单开关（classes/projects/project_view 卡片与工具栏共用；展开时抬升所在卡片层级避免遮挡） =====
+function toggleDD(e, btn) {
+    e.stopPropagation();
+    var dd = btn.closest('.admin-dd');
+    if (!dd) return;
+    var wasOpen = dd.classList.contains('open');
+    document.querySelectorAll('.admin-dd.open').forEach(function (d) {
+        d.classList.remove('open');
+        var card = d.closest('.item-card');
+        if (card) card.classList.remove('dd-top');
+    });
+    if (!wasOpen) {
+        dd.classList.add('open');
+        var card = dd.closest('.item-card');
+        if (card) card.classList.add('dd-top');
+    }
+    btn.classList.toggle('active', dd.classList.contains('open'));   // project_view ⚙ 按钮高亮态
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.pv-dd')) return;   // project_view ⚙ 视图工具条自管（内部点击不收起）
+    document.querySelectorAll('.admin-dd.open').forEach(function (d) {
+        d.classList.remove('open');
+        var card = d.closest('.item-card');
+        if (card) card.classList.remove('dd-top');
+    });
+});
+</script>
+<script>
+function togglePageHelp(open) {
+    var m = document.getElementById('pageHelpModal');
+    if (m) m.classList.toggle('show', open);
+}
+// 三组选项卡切换（班级管理/项目列表：我的 / 授权 / 其他）
+function switchCtxTab(btn, group, key) {
+    btn.parentElement.querySelectorAll('.ctx-tab').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    document.querySelectorAll('.ctx-tabpane[data-group="' + group + '"]').forEach(function (p) {
+        p.style.display = (p.getAttribute('data-key') === key) ? '' : 'none';
+    });
+}
+// 所有弹窗统一注入「最大化 / 还原」+「✕ 关闭」按钮（顺序：最大化 关闭；PC 自动宽高、手机 90%，均可一键撑满）
+(function () {
+    function initModalMaxBtns() {
+        document.querySelectorAll('.modal-mask .modal').forEach(function (m) {
+            if (m.querySelector('.modal-max-btn')) return;
+            var max = document.createElement('button');
+            max.type = 'button';
+            max.className = 'modal-max-btn';
+            max.title = '最大化 / 还原';
+            max.innerHTML = '&#x2922;';
+            max.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var maxed = m.classList.toggle('modal-max');
+                max.innerHTML = maxed ? '&#x2923;' : '&#x2922;';
+            });
+            m.appendChild(max);
+            // ✕ 关闭按钮（位于最大化右侧）：关闭所属弹窗，还原最大化状态并广播 modalclosed
+            var close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'modal-close-btn';
+            close.title = '关闭';
+            close.setAttribute('aria-label', '关闭');
+            close.innerHTML = '&#x2715;';
+            close.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var mask = m.closest('.modal-mask');
+                m.classList.remove('modal-max');
+                max.innerHTML = '&#x2922;';
+                if (mask) {
+                    mask.classList.remove('show');
+                    mask.dispatchEvent(new CustomEvent('modalclosed', { bubbles: false }));
+                }
+            });
+            m.appendChild(close);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initModalMaxBtns);
+    } else {
+        initModalMaxBtns();
+    }
+})();
+</script>
+</body>
+</html>

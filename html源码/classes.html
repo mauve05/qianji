@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>班级管理 - 潜记二维码作业登记系统</title>
+    <link rel="stylesheet" href="css/style.css?v=20260915">
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="favicon.ico"/>
+    <script src="js/db.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/sw_boot.js"></script>
+</head>
+<body>
+<nav class="navbar">
+        <div class="navbar-inner">
+        <a class="navbar-brand" href="index.html">潜记 · 作业登记</a>
+        <div class="navbar-menu">
+                                    <a href="index.html" class="active">班级列表</a>
+                        <a href="export.html">统计报表</a>
+                    </div>
+        <!-- 移动端：汉堡按钮 → 左侧抽屉菜单 -->
+        <button type="button" class="nav-burger" onclick="toggleDrawer(true)" aria-label="打开菜单">☰</button>
+    </div>
+</nav>
+<!-- 移动端左侧抽屉菜单 -->
+<div class="drawer-mask" id="drawerMask" onclick="toggleDrawer(false)"></div>
+<aside class="side-drawer" id="sideDrawer" aria-label="导航菜单">
+    <div class="drawer-head">
+        <b>潜记 · 作业登记</b>
+        <button type="button" class="drawer-close" onclick="toggleDrawer(false)" aria-label="关闭菜单">✕</button>
+    </div>
+        <nav class="drawer-nav">
+                <a href="index.html" class="active">班级列表</a>
+                <a href="export.html">统计报表</a>
+            </nav>
+</aside>
+<script>
+function toggleDrawer(open) {
+    var d = document.getElementById('sideDrawer');
+    var m = document.getElementById('drawerMask');
+    if (!d || !m) return;
+    d.classList.toggle('open', open);
+    m.classList.toggle('show', open);
+}
+</script>
+<!-- 移动端底部导航栏（PC 隐藏，≤768px 显示）：随上下文变化（默认：班级列表/统计报表/个人中心；班级：班级情况/学生列表/班级统计/个人中心；项目：项目情况/扫码登记/项目统计/个人中心）。加入学校/后台管理仅 PC 显示 -->
+<nav class="bottom-nav">
+        <a class="bottom-nav-item active" href="index.html">
+        <span class="bottom-nav-icon">📘</span>
+        <span class="bottom-nav-text">班级列表</span>
+    </a>
+        <a class="bottom-nav-item" href="export.html">
+        <span class="bottom-nav-icon">📊</span>
+        <span class="bottom-nav-text">统计报表</span>
+    </a>
+    </nav>
+<div class="app-content">
+
+
+<div class="panel" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <button type="button" class="btn" onclick="openModal('addModal')">＋ 新建班级</button>
+    <button type="button" class="btn btn-outline" onclick="openModal('recycleModal')">🗑 回收站<span id="recycleBtnCount"></span></button>
+    </div>
+
+
+
+
+
+<div class="grid" id="classGrid"></div>
+<div id="classEmpty" style="display:none;" class="panel" style2="text-align:center;color:#999;">还没有班级，点击上方「＋ 新建班级」创建</div>
+
+<!-- 编辑班级弹层 -->
+<div class="modal-mask" id="editModal">
+    <div class="modal">
+        <h3>编辑班级</h3>
+        <form id="editClassForm" autocomplete="off">
+            <input type="hidden" name="action" value="rename" autocomplete="off">
+            <input type="hidden" name="class_id" id="edit_id" autocomplete="off">
+                        <div class="form-group">
+                <label>班级名称</label>
+                <input type="text" name="name" id="edit_name" class="form-control" required autocomplete="off">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline" onclick="closeEdit()">取消</button>
+                <button type="submit" class="btn">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 新建班级弹层（90% 分布式） -->
+<div class="modal-mask" id="addModal">
+    <div class="modal modal-lg">
+        <h3>＋ 新建班级</h3>
+        <div class="modal-lg-body">
+            <form id="addClassForm" autocomplete="off">
+                <input type="hidden" name="action" value="add" autocomplete="off">
+                <div class="form-grid">
+                                        <div class="form-group">
+                        <label>班级名称</label>
+                        <input type="text" name="name" class="form-control" placeholder="例如：三年级2班" required autocomplete="off">
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn btn-outline" onclick="closeModal('addModal')">取消</button>
+            <button type="submit" class="btn" form="addClassForm">创建班级</button>
+        </div>
+    </div>
+</div>
+
+<!-- 导入历史数据弹层（共享：班级级 5 列模板，项目不存在自动创建） -->
+<div class="modal-mask" id="importModal">
+    <div class="modal">
+        <h3>📥 导入历史登记数据 - <span id="import_name"></span><button type="button" class="hint-q" onclick="toggleHint(event, '<b>导入历史登记数据说明</b><br>· 点「⬇ 下载模板」获取 CSV 模板，列顺序：<b>项目名称,编号,姓名,日期,评价值</b><br>· 评价值留空=仅登记不评价；日期留空=按当前时间；打卡项目日期必填（如 2026-09-01）<br>· 选择文件后点「开始导入」；项目不存在自动创建，已有登记自动跳过（可重复导入）')">?</button></h3>
+        <div style="margin:12px 0;">
+            <a id="import_tpl" class="btn btn-outline" style="text-decoration:none;" href="#" onclick="return dlImportTpl(event)">⬇ 下载模板</a>
+        </div>
+        <form id="importHistoryForm" autocomplete="off">
+            <input type="hidden" name="class_id" id="import_id" autocomplete="off">
+            <div class="form-group">
+                <label>选择 CSV/TXT 文件（≤5MB，UTF-8 或 GBK 编码）</label>
+                <input type="file" name="import_file" accept=".csv,.txt" class="form-control" required autocomplete="off">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline" onclick="closeModal('importModal')">取消</button>
+                <button type="submit" class="btn btn-success">开始导入</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 回收站弹层（软删除班级：恢复 / 彻底删除） -->
+<div class="modal-mask" id="recycleModal">
+    <div class="modal" style="max-width:760px;">
+        <h3>🗑 班级回收站（<span id="recycleCount">0</span>）<button type="button" class="hint-q" onclick="toggleHint(event, '<b>回收站说明</b><br>· 软删除的班级在此保留<br>· <b>恢复</b>=连同其项目与登记数据一并还原<br>· <b>彻底删除</b>=学生、项目与登记数据全部清除，<b>不可恢复</b>（需确认后执行）')">?</button></h3>
+                <div id="recycleBody"><p class="tip">回收站为空</p></div>
+                <div class="modal-actions">
+            <button type="button" class="btn btn-outline" onclick="closeModal('recycleModal')">关闭</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// 敏感操作：确认后直接本地执行（单用户版无登录密码验证）
+function pwdAction(action, id, confirmText) {
+    if (!confirm(confirmText)) return;
+    runClassAction(action, id);
+}
+function doAction(action, id, confirmText) {
+    if (confirmText && !confirm(confirmText)) return;
+    runClassAction(action, id);
+}
+function openModal(id) {
+    document.getElementById(id).classList.add('show');
+}
+function closeModal(id) {
+    document.getElementById(id).classList.remove('show');
+}
+// 点击遮罩空白处关闭
+document.querySelectorAll('.modal-mask').forEach(function (m) {
+    m.addEventListener('click', function (e) { if (e.target === m) m.classList.remove('show'); });
+});
+function openEdit(id, name) {
+    var c = CLS[id] || {};
+    document.getElementById('edit_id').value = id;
+    document.getElementById('edit_name').value = c.name || '';
+    document.getElementById('editModal').classList.add('show');
+}
+function closeEdit() {
+    document.getElementById('editModal').classList.remove('show');
+}
+function recyclePurge(action, id, confirmText) {
+    pwdAction(action, id, confirmText);
+}
+function openImport(id, name) {
+    var c = CLS[id] || {};
+    document.getElementById('import_id').value = id;
+    document.getElementById('import_name').textContent = c.name || '';
+    openModal('importModal');
+}
+
+// ===== ===== 本地实现：渲染 + 页面动作（原 classes.php 后端逻辑 IndexedDB 化） =====
+function esc(str) {
+    return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+function fmtDT(d) {
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+}
+function genNumCode() { var s = ''; for (var i = 0; i < 8; i++) s += Math.floor(Math.random() * 10); return s; }
+function genToken() { var s = '', H = '0123456789abcdef'; for (var i = 0; i < 32; i++) s += H[Math.floor(Math.random() * 16)]; return s; }
+var CLS = {};   // class_id → 行缓存（openEdit/openImport 取名称）
+
+// ---- 渲染：班级卡片（原 render_class_card 自建班分支；置顶橙色边框+📌） ----
+function renderClasses() {
+    return Promise.all([
+        DB.find('classes', function (c) { return !c.deleted_at; }),
+        DB.all('students'),
+        DB.find('projects', function (p) { return !p.deleted_at; }),
+        DB.all('records'),
+        DB.all('pinned_items')
+    ]).then(function (arr) {
+        var classes = arr[0], students = arr[1], projects = arr[2], records = arr[3], pins = arr[4];
+        CLS = {};
+        classes.forEach(function (c) { CLS[c.id] = c; });
+        var pinned = {};
+        pins.forEach(function (p) { if (p.item_type === 'class') pinned[p.item_id] = 1; });
+        classes.sort(function (a, b) {
+            var pa = pinned[a.id] ? 0 : 1, pb = pinned[b.id] ? 0 : 1;
+            return pa !== pb ? pa - pb : (a.id - b.id);
+        });
+        var pcls = {}, stuCnt = {}, prjCnt = {}, lastUpd = {};
+        projects.forEach(function (p) { pcls[p.id] = p.class_id; });
+        students.forEach(function (s) { stuCnt[s.class_id] = (stuCnt[s.class_id] || 0) + 1; });
+        projects.forEach(function (p) { prjCnt[p.class_id] = (prjCnt[p.class_id] || 0) + 1; });
+        classes.forEach(function (c) { lastUpd[c.id] = String(c.created_at || ''); });
+        records.forEach(function (r) {
+            var cid = pcls[r.project_id];
+            if (!cid) return;
+            ['registered_at', 'eval_at'].forEach(function (k) {
+                var v = String(r[k] || '');
+                if (v && v > (lastUpd[cid] || '')) lastUpd[cid] = v;
+            });
+        });
+        var html = '';
+        classes.forEach(function (c) {
+            var cid = c.id, isPin = !!pinned[cid];
+            html += '<div class="item-card" style="border-left:4px solid ' + (isPin ? '#e67e22' : '#667eea') + ';cursor:pointer;position:relative;" onclick="window.location.href=\'projects.html?class_id=' + cid + '\'">'
+                + (isPin ? '<span style="color:#e67e22;" title="已置顶">📌</span>' : '')
+                + '<h3>' + esc(c.name) + '</h3>'
+                + '<div class="meta"><div>学生 ' + (stuCnt[cid] || 0) + ' 人，项目 ' + (prjCnt[cid] || 0) + ' 个</div>'
+                + '<div>建于 ' + esc(String(c.created_at || '').slice(0, 10)) + '</div>'
+                + '<div>最后更新时间：' + esc(String(lastUpd[cid] || '').slice(0, 16)) + '</div></div>'
+                + '<div class="item-actions" onclick="event.stopPropagation()">'
+                + '<a href="projects.html?class_id=' + cid + '" class="btn btn-sm">进入</a>'
+                + '<a href="stats.html?class_id=' + cid + '" class="btn btn-sm btn-outline">📊 查看报表</a>'
+                + '<div class="admin-dd"><button type="button" class="btn btn-sm btn-outline" onclick="toggleDD(event,this)">⚙ 管理 ▾</button><div class="admin-dd-menu">'
+                + '<a href="students.html?class_id=' + cid + '">📋 学生名单</a>'
+                + '<a href="qrcode.html?class_id=' + cid + '">🎲 生成二维码</a>'
+                + '<button type="button" class="dd-item" onclick="openImport(' + cid + ')">📥 导入历史数据</button>'
+                + '<button type="button" class="dd-item" onclick="openEdit(' + cid + ')">✏️ 编辑</button>'
+                + '<button type="button" class="dd-item" title="' + (isPin ? '取消置顶' : '置顶该班级') + '" onclick="doAction(\'toggle_pin_class\',' + cid + ')">📌 ' + (isPin ? '取消置顶' : '置顶') + '</button>'
+                + '<button type="button" class="dd-item" onclick="doAction(\'copy\',' + cid + ',\'确认复制该班级（含学生名单）？\')">📄 复制</button>'
+                + '<button type="button" class="dd-item" onclick="pwdAction(\'reset\',' + cid + ',\'重置将清空该班级所有项目与登记数据（保留学生名单），不可恢复！\')">♻️ 重置</button>'
+                + '<button type="button" class="dd-item dd-danger" onclick="pwdAction(\'delete\',' + cid + ',\'班级将移入回收站（其项目一并隐藏），可在回收站恢复或彻底删除，确认删除？\')">🗑 删除</button>'
+                + '</div></div></div></div>';
+        });
+        document.getElementById('classGrid').innerHTML = html;
+        document.getElementById('classEmpty').style.display = classes.length ? 'none' : '';
+    });
+}
+
+// ---- 渲染：回收站（原班级回收站表格） ----
+function renderRecycle() {
+    return Promise.all([
+        DB.find('classes', function (c) { return c.deleted_at; }),
+        DB.all('students'),
+        DB.all('projects')
+    ]).then(function (arr) {
+        var rows = arr[0].sort(function (a, b) { return String(b.deleted_at || '').localeCompare(String(a.deleted_at || '')); });
+        var sc = {}, pc = {};
+        arr[1].forEach(function (s) { sc[s.class_id] = (sc[s.class_id] || 0) + 1; });
+        arr[2].forEach(function (p) { pc[p.class_id] = (pc[p.class_id] || 0) + 1; });
+        var btnCnt = document.getElementById('recycleBtnCount');
+        if (btnCnt) btnCnt.textContent = rows.length ? '（' + rows.length + '）' : '';
+        var cnt = document.getElementById('recycleCount');
+        if (cnt) cnt.textContent = rows.length;
+        var body = document.getElementById('recycleBody');
+        if (!rows.length) { body.innerHTML = '<p class="tip">回收站为空</p>'; return; }
+        var h = '<div class="table-wrap"><table class="data-table"><thead><tr><th>班级</th><th>学生</th><th>项目</th><th>删除时间</th><th style="width:220px;">操作</th></tr></thead><tbody>';
+        rows.forEach(function (r) {
+            h += '<tr><td>' + esc(r.name) + '</td><td>' + (sc[r.id] || 0) + '</td><td>' + (pc[r.id] || 0) + '</td><td>' + esc(r.deleted_at) + '</td>'
+                + '<td><button type="button" class="btn btn-sm btn-success" onclick="doAction(\'class_restore\',' + r.id + ')">恢复</button> '
+                + '<button type="button" class="btn btn-sm btn-danger" onclick="recyclePurge(\'class_purge\',' + r.id + ',\'彻底删除该班级？学生、项目与登记数据将全部清除且不可恢复！\')">彻底删除</button></td></tr>';
+        });
+        h += '</tbody></table></div>';
+        body.innerHTML = h;
+    });
+}
+
+// ---- 页面动作分发（原 POST action；单用户无权限/密码校验） ----
+function runClassAction(action, id) {
+    if (action === 'toggle_pin_class') {
+        DB.find('pinned_items', function (p) { return p.item_type === 'class' && p.item_id === id; }).then(function (rows) {
+            if (rows.length) {
+                return DB.del('pinned_items', rows[0].id).then(function () { showToast('已取消置顶', 'success'); renderClasses(); });
+            }
+            return DB.insert('pinned_items', { item_type: 'class', item_id: id, created_at: DB.nowStr() }).then(function () { showToast('班级已置顶', 'success'); renderClasses(); });
+        });
+    } else if (action === 'copy') {
+        DB.get('classes', id).then(function (cls) {
+            if (!cls) return;
+            var nw = { teacher_id: 0, name: cls.name + '（副本）', mode: cls.mode || 'count', class_code: genNumCode(), announce_token: genToken(), created_at: DB.nowStr(), deleted_at: null };
+            DB.insert('classes', nw).then(function (nc) {
+                return DB.by('students', 'class_id', id).then(function (sts) {
+                    var chain = Promise.resolve();
+                    sts.forEach(function (s) {
+                        (function (s) {
+                            chain = chain.then(function () {
+                                return DB.insert('students', { class_id: nc.id, seat_no: s.seat_no || '', name: s.name, student_no: s.student_no || '', remark: s.remark || '', disabled: s.disabled || 0, created_at: DB.nowStr() });
+                            });
+                        })(s);
+                    });
+                    return chain.then(function () { showToast('班级已复制（含学生名单，不含信息）', 'success'); renderClasses(); });
+                });
+            });
+        });
+    } else if (action === 'reset') {
+        DB.find('projects', function (p) { return p.class_id === id; }).then(function (ps) {
+            var pids = ps.map(function (p) { return p.id; });
+            var inP = function (r) { return pids.indexOf(r.project_id) >= 0; };
+            return DB.delWhere('records', inP)
+                .then(function () { return DB.delWhere('record_days', inP); })
+                .then(function () { return DB.delWhere('record_rounds', inP); })
+                .then(function () { return DB.delWhere('student_comments', inP); })
+                .then(function () { return DB.delWhere('omr_results', inP); })
+                .then(function () { return DB.delWhere('projects', function (p) { return p.class_id === id; }); });
+        }).then(function () { showToast('班级已重置（登记与项目数据已清空，学生名单保留）', 'success'); renderClasses(); renderRecycle(); });
+    } else if (action === 'delete') {
+        DB.patch('classes', id, { deleted_at: DB.nowStr() }).then(function () {
+            return DB.find('projects', function (p) { return p.class_id === id && !p.deleted_at; }).then(function (ps) {
+                var chain = Promise.resolve();
+                ps.forEach(function (p) {
+                    (function (p) { chain = chain.then(function () { return DB.patch('projects', p.id, { deleted_at: DB.nowStr() }); }); })(p);
+                });
+                return chain;
+            });
+        }).then(function () { showToast('班级已移入回收站（其项目一并隐藏），可在「回收站」恢复或彻底删除', 'success', true); renderClasses(); renderRecycle(); });
+    } else if (action === 'class_restore') {
+        DB.patch('classes', id, { deleted_at: null }).then(function () {
+            return DB.find('projects', function (p) { return p.class_id === id && p.deleted_at; }).then(function (ps) {
+                var chain = Promise.resolve();
+                ps.forEach(function (p) {
+                    (function (p) { chain = chain.then(function () { return DB.patch('projects', p.id, { deleted_at: null }); }); })(p);
+                });
+                return chain;
+            });
+        }).then(function () { showToast('班级已恢复（含其项目与登记数据）', 'success'); renderClasses(); renderRecycle(); });
+    } else if (action === 'class_purge') {
+        DB.find('projects', function (p) { return p.class_id === id; }).then(function (ps) {
+            var pids = ps.map(function (p) { return p.id; });
+            var inP = function (r) { return pids.indexOf(r.project_id) >= 0; };
+            return DB.delWhere('records', inP)
+                .then(function () { return DB.delWhere('record_days', inP); })
+                .then(function () { return DB.delWhere('record_rounds', inP); })
+                .then(function () { return DB.delWhere('student_comments', inP); })
+                .then(function () { return DB.delWhere('omr_results', inP); })
+                .then(function () { return DB.delWhere('omr_images', function (im) { return im.class_id === id; }); })
+                .then(function () { return DB.delWhere('pinned_items', function (p) { return (p.item_type === 'project' && pids.indexOf(p.item_id) >= 0) || (p.item_type === 'class' && p.item_id === id); }); })
+                .then(function () { return DB.delWhere('projects', function (p) { return p.class_id === id; }); })
+                .then(function () { return DB.delWhere('students', function (s) { return s.class_id === id; }); });
+        }).then(function () { return DB.del('classes', id); })
+            .then(function () { showToast('班级已彻底删除（学生、项目与登记数据一并清除）', 'success', true); renderClasses(); renderRecycle(); });
+    }
+}
+
+// ---- 表单处理：编辑重命名 / 新建 / 导入历史数据 ----
+function initFormHandlers() {
+    document.getElementById('editClassForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var id = parseInt(document.getElementById('edit_id').value, 10);
+        var name = document.getElementById('edit_name').value.trim();
+        if (!name) { showToast('班级名称不能为空', 'error'); return; }
+        DB.patch('classes', id, { name: name }).then(function () {
+            closeModal('editModal');
+            showToast('班级信息已更新', 'success');
+            renderClasses();
+        });
+    });
+    document.getElementById('addClassForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var name = this.querySelector('[name=name]').value.trim();
+        if (!name) { showToast('班级名称不能为空', 'error'); return; }
+        DB.insert('classes', { teacher_id: 0, name: name, mode: 'count', class_code: genNumCode(), announce_token: genToken(), created_at: DB.nowStr(), deleted_at: null }).then(function () {
+            closeModal('addModal');
+            showToast('班级创建成功', 'success');
+            renderClasses();
+        });
+    });
+    document.getElementById('importHistoryForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var inp = this.querySelector('[name=import_file]');
+        var f = inp.files && inp.files[0];
+        if (!f) { showToast('请选择模板 CSV/TXT 文件上传（可在导入弹窗中下载模板）', 'error'); return; }
+        if (f.size > 5 * 1024 * 1024) { showToast('文件超过 5MB 上限', 'error'); return; }
+        var cid = parseInt(document.getElementById('import_id').value, 10);
+        var fr = new FileReader();
+        fr.onload = function () {
+            importClassHistory(cid, decodeCsvText(fr.result)).then(function (r) {
+                closeModal('importModal');
+                inp.value = '';
+                showToast(esc(r.msg), r.ok ? 'success' : 'error', !r.ok);
+            });
+        };
+        fr.readAsArrayBuffer(f);
+    });
+}
+
+// CSV 解码：UTF-8 严格模式优先，失败回退 GBK
+function decodeCsvText(buf) {
+    try {
+        var t = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+        return t.charCodeAt(0) === 0xFEFF ? t.slice(1) : t;
+    } catch (e) {
+        var g = '';
+        try { g = new TextDecoder('gbk').decode(buf); } catch (e2) { g = new TextDecoder('utf-8').decode(buf); }
+        return g.charCodeAt(0) === 0xFEFF ? g.slice(1) : g;
+    }
+}
+
+// CSV 单行解析（支持引号包裹与双引号转义）
+function parseCsvLine(line) {
+    var cells = [], cur = '', inQ = false;
+    for (var i = 0; i < line.length; i++) {
+        var ch = line[i];
+        if (inQ) {
+            if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+            else cur += ch;
+        } else if (ch === '"') inQ = true;
+        else if (ch === ',') { cells.push(cur); cur = ''; }
+        else cur += ch;
+    }
+    cells.push(cur);
+    return cells;
+}
+
+// 下载班级导入模板（原 classes.php?dl_template=class）
+function dlImportTpl(ev) {
+    ev.preventDefault();
+    var csv = '\uFEFF项目名称,编号,姓名,日期,评价值\n数学作业,2024001,张三,2026-09-01 10:00,优\n数学作业,2024002,李四,,\n';
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '班级历史数据导入模板.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 300);
+    return false;
+}
+
+// 班级历史数据导入（原 import_history_csv 移植：项目缺失自动创建（优良模式），编号精确→姓名兜底，歧义跳过，已登记跳过）
+function importClassHistory(classId, content) {
+    return DB.get('classes', classId).then(function (cls) {
+        if (!cls) return { ok: false, msg: '无权操作该班级' };
+        var lines = content.replace(/\r\n|\r/g, '\n').split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return l !== ''; });
+        if (!lines.length) return { ok: false, msg: '文件内容为空' };
+        if (lines.length > 5001) return { ok: false, msg: '数据行数超过上限（5000 行）' };
+        var start = 0;
+        var head = parseCsvLine(lines[0]).slice(0, 2).join('');
+        if (/编号|姓名|项目名称|评价值|日期/.test(head)) start = 1;
+        return Promise.all([
+            DB.by('students', 'class_id', classId),
+            DB.find('projects', function (p) { return p.class_id === classId && !p.deleted_at; }),
+            DB.all('eval_modes')
+        ]).then(function (arr) {
+            var byNo = {}, byName = {};
+            arr[0].forEach(function (s) {
+                var no = String(s.student_no == null ? '' : s.student_no).trim();
+                var nm = String(s.name == null ? '' : s.name).trim();
+                if (no !== '') byNo[no] = byNo[no] === undefined ? s.id : 'AMBIG';
+                if (nm !== '') byName[nm] = byName[nm] === undefined ? s.id : 'AMBIG';
+            });
+            var emMap = {};
+            arr[2].forEach(function (m) { emMap[m.id] = m; });
+            var STD = {
+                smile: ['😊', '😐', '😞'],
+                points: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
+                score: null,
+                grade: ['优', '良', '合格', '不合格', '待定', '特殊'],
+                tf: ['√', '×', '待定'],
+                star: ['★', '★★', '★★★', '★★★★', '★★★★★'],
+                comment: null,
+                abcd: ['A', 'B', 'C', 'D']
+            };
+            function evalOk(mode, v) {
+                if (typeof mode === 'string' && mode.charAt(0) === 'c' && /^\d+$/.test(mode.slice(1))) {
+                    var em = emMap[parseInt(mode.slice(1), 10)];
+                    if (!em) return false;
+                    var opts = em.options;
+                    if (!opts) return v !== '' && v.length <= 200;
+                    try { opts = JSON.parse(opts); } catch (e) { return false; }
+                    return Object.keys(opts).indexOf(v) >= 0;
+                }
+                if (!(mode in STD)) return false;
+                if (STD[mode] === null) return v !== '' && v.length <= 200;   // score/comment 自由输入
+                return STD[mode].indexOf(v) >= 0;
+            }
+            var projCache = {}, okRows = 0, skip = 0, reasons = [];
+            function noteSkip(why) { skip++; if (reasons.length < 5 && reasons.indexOf(why) < 0) reasons.push(why); }
+            function findOrCreateProject(pname) {
+                if (projCache[pname] !== undefined) return Promise.resolve(projCache[pname]);
+                var found = arr[1].filter(function (p) { return p.name === pname; });
+                var p0 = found.length ? found[0] : null;
+                var pP = p0 ? Promise.resolve(p0) : DB.insert('projects', {
+                    class_id: classId, name: pname, mode: 'count', eval_mode: 'grade', scope: 'class',
+                    late_seconds: 1800, lock_seconds: 1800, created_by: 0, created_at: DB.nowStr(), deleted_at: null
+                });
+                return pP.then(function (p) { arr[1].push(p); projCache[pname] = p; return p; });
+            }
+            var chain = Promise.resolve();
+            for (var i = start; i < lines.length; i++) {
+                (function (line) {
+                    chain = chain.then(function () {
+                        var cells = parseCsvLine(line).map(function (c) { return c.trim(); });
+                        var pname = cells[0] || '';
+                        if (pname === '') { noteSkip('项目名称为空'); return; }
+                        return findOrCreateProject(pname).then(function (project) {
+                            var no = cells[1] || '', nm = cells[2] || '', dstr = cells[3] || '', evalv = cells[4] || '';
+                            var entry = null;
+                            if (no !== '' && byNo[no] !== undefined) entry = byNo[no];
+                            else if (no === '' && nm !== '' && byName[nm] !== undefined) entry = byName[nm];
+                            else if (no !== '' && byNo[no] === undefined && nm !== '' && byName[nm] !== undefined) entry = byName[nm];
+                            if (entry === null) { noteSkip('未匹配到学生：' + (no !== '' ? no : nm)); return; }
+                            if (entry === 'AMBIG') { noteSkip('学生信息重复（编号/姓名歧义）：' + (no !== '' ? no : nm)); return; }
+                            var projDaily = (project.mode || 'count') === 'daily';
+                            var ts = null;
+                            if (dstr !== '') {
+                                var d = new Date(String(dstr).replace(/-/g, '/'));
+                                if (isNaN(d.getTime())) { noteSkip('日期无法解析：' + dstr); return; }
+                                ts = d;
+                            }
+                            if (projDaily && !ts) { noteSkip('打卡模式缺少日期'); return; }
+                            var regAt = ts ? fmtDT(ts) : DB.nowStr();
+                            if (evalv !== '' && !evalOk(project.eval_mode, evalv)) { noteSkip('评价值不合法（' + project.eval_mode + '）：' + evalv); return; }
+                            return DB.find('records', function (r) { return r.project_id === project.id && r.student_id === entry; }).then(function (ex) {
+                                var p2 = Promise.resolve();
+                                if (!ex.length) {
+                                    p2 = DB.insert('records', {
+                                        project_id: project.id, student_id: entry, registered: 1, registered_at: regAt,
+                                        registered_by: 'import', eval_value: evalv !== '' ? evalv : null, eval_at: evalv !== '' ? regAt : null
+                                    });
+                                }
+                                if (projDaily && ts) {
+                                    var regDate = DB.dateStr(ts);
+                                    p2 = p2.then(function () {
+                                        return DB.find('record_days', function (rd) { return rd.project_id === project.id && rd.student_id === entry && rd.reg_date === regDate; }).then(function (exd) {
+                                            if (!exd.length) return DB.insert('record_days', { project_id: project.id, student_id: entry, reg_date: regDate, created_at: regAt });
+                                        });
+                                    });
+                                }
+                                return p2.then(function () { okRows++; });
+                            });
+                        });
+                    });
+                })(lines[i]);
+            }
+            return chain.then(function () {
+                var msg = '成功导入 ' + okRows + ' 行';
+                if (skip > 0) msg += '，跳过 ' + skip + ' 行' + (reasons.length ? ('（' + reasons.join('；') + (skip >= 5 ? '…' : '') + '）') : '');
+                return { ok: okRows > 0 || skip === 0, msg: msg };
+            });
+        });
+    });
+}
+
+initFormHandlers();
+renderClasses();
+renderRecycle();
+</script>
+</div>
+<style>
+.help-fab { position: fixed; top: 70px; right: 16px; z-index: 1100; width: 38px; height: 38px;
+    border-radius: 50%; border: none; background: #667eea; color: #fff; font-size: 20px; font-weight: bold;
+    cursor: pointer; box-shadow: 0 2px 10px rgba(102,126,234,0.45); }
+.help-fab:hover { background: #5568d3; }
+.help-body h4 { margin: 14px 0 6px; font-size: 14px; color: #667eea; }
+.help-body ul { margin: 0 0 8px; padding-left: 20px; }
+.help-body li { font-size: 13px; color: #555; line-height: 1.9; }
+</style>
+<button type="button" class="help-fab" onclick="togglePageHelp(true)" title="操作帮助" aria-label="操作帮助">?</button>
+<div class="modal-mask" id="pageHelpModal" onclick="if(event.target===this)togglePageHelp(false)">
+    <div class="modal" style="max-width:640px;">
+        <h3>❓ 班级管理 · 操作帮助</h3>
+        <div class="help-body">
+                        <h4>页面结构</h4>
+            <ul>
+                <li>班级卡片显示：学生数 / 项目数、建于日期、最后更新时间；点击卡片直接进入该班项目列表</li><li>📌 置顶的班级排在最前（橙色边框标识）</li>            </ul>
+                        <h4>新建班级</h4>
+            <ul>
+                <li><b>＋ 新建班级</b>：填写班级名创建，创建后自动生成 8 位班级码（供家长查询使用）</li>            </ul>
+                        <h4>卡片按钮与「⚙ 管理」菜单</h4>
+            <ul>
+                <li>卡片按钮：<b>进入</b>（打开该班项目列表）、<b>📊 查看报表</b>（打开班级统计中心）；其余功能收在 <b>⚙ 管理</b> 二级菜单</li><li><b>⚙ 管理</b>菜单：<b>学生名单</b>（弹窗管理学生）、<b>生成二维码</b>、<b>导入历史数据</b>（按模板 CSV 批量导入历史登记）、<b>编辑</b></li><li><b>置顶 / 复制</b>：置顶的班级排在最前；复制创建含学生名单的副本</li><li><b>♻️ 重置 / 🗑 删除（敏感操作）</b>：确认后执行；重置清空项目与登记数据（学生保留），删除移入回收站</li><li><b>回收站彻底删除</b>：学生、项目与登记数据全部清除且不可恢复</li>            </ul>
+                        <h4>回收站</h4>
+            <ul>
+                <li>软删除的班级在此保留：<b>恢复</b> = 连同其项目与登记数据一并还原；<b>彻底删除</b> = 学生、项目与登记数据全部清除，不可恢复</li>            </ul>
+                    </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="togglePageHelp(false)">我知道了</button>
+        </div>
+    </div>
+</div>
+<style>
+/* ===== 全局操作反馈 toast：页面下方中央、黑色（同 omr_scan.php）；3 秒自动消失，sticky=重要提示需点击才消失 ===== */
+.toast-wrap { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:3000; display:flex; flex-direction:column-reverse; gap:8px; align-items:center; max-width:92vw; pointer-events:none; }
+.toast { pointer-events:auto; background:rgba(40,44,60,0.92); color:#fff; box-shadow:0 8px 24px rgba(0,0,0,0.28); border-radius:10px; padding:10px 16px; font-size:14px; line-height:1.6; max-width:92vw; word-break:break-all; cursor:pointer; animation:toastIn .22s ease; }
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@media (max-width: 768px) { .toast-wrap { bottom:76px; } }
+/* ===== 行内小问号按钮（点击在问号旁弹出说明浮层；与右上角大 ? 操作帮助并存） ===== */
+.hint-q { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; min-width:16px; border-radius:50%; background:#667eea; color:#fff; font-size:11px; font-weight:bold; line-height:1; border:none; cursor:pointer; vertical-align:middle; margin:0 0 2px 6px; padding:0; box-shadow:0 1px 4px rgba(102,126,234,0.4); font-family:inherit; }
+.hint-q:hover { background:#5568d3; }
+/* 小问号说明浮层：紧贴问号按钮（优先下方，放不下翻转到上方），点浮层外/再点同一个小问号收起 */
+.hint-pop { position:fixed; z-index:4000; background:#fff; color:#333; border:1px solid #e3e6f0; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.18); padding:12px 14px; font-size:13px; line-height:1.8; text-align:left; max-width:340px; max-height:70vh; overflow-y:auto; word-break:break-all; animation:toastIn .18s ease; }
+.hint-pop b { color:#667eea; }
+@media (max-width: 768px) { .hint-pop { max-width:92vw; } }
+</style>
+<script>
+// ===== 全局操作反馈 toast：showToast(msg, type, sticky) 页面下方中央黑色（同 omr_scan.php）；sticky=true 重要提示需点击才消失 =====
+function showToast(msg, type, sticky) {
+    var wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.className = 'toast-wrap'; document.body.appendChild(wrap); }
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' toast-' + type : '');
+    t.innerHTML = msg;
+    t.addEventListener('click', function () { dismiss(); });
+    wrap.appendChild(t);
+    var tm = null;
+    function dismiss() { if (tm) clearTimeout(tm); if (t.parentNode) t.parentNode.removeChild(t); }
+    if (!sticky) tm = setTimeout(dismiss, 3000);
+    return t;
+}
+// 页面内 PHP 渲染的 .alert-success/.alert-error/.alert-danger 横幅自动转浮窗（error 需点击关闭；info/warning 常驻说明保留横幅）
+(function () {
+    document.querySelectorAll('.alert.alert-success, .alert.alert-error, .alert.alert-danger').forEach(function (el) {
+        var type = el.classList.contains('alert-success') ? 'success' : 'error';
+        showToast(el.innerHTML, type, type === 'error');
+        el.style.display = 'none';
+    });
+})();
+// ===== 行内小问号说明：toggleHint(event, 'HTML 说明文字') → 问号旁浮层（优先下方，放不下翻转到上方；点浮层外/再点同一个小问号收起） =====
+function hintPopPos(p) {
+    var b = p.__src; if (!b) return;
+    var r = b.getBoundingClientRect();
+    var pw = p.offsetWidth, ph = p.offsetHeight;
+    var left = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, window.innerWidth - pw - 8));
+    var top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;   // 下方放不下：翻转到上方
+    p.style.left = left + 'px';
+    p.style.top = Math.max(8, top) + 'px';
+}
+function hintPopClose() {
+    var p = document.getElementById('hintPop');
+    if (p && p.parentNode) p.parentNode.removeChild(p);
+}
+function toggleHint(ev, html) {
+    ev.stopPropagation();
+    var b = ev.currentTarget;
+    var old = document.getElementById('hintPop');
+    if (old && old.__src === b) { hintPopClose(); return; }   // 再点同一个小问号：收起
+    hintPopClose();
+    var p = document.createElement('div');
+    p.id = 'hintPop';
+    p.className = 'hint-pop';
+    p.innerHTML = html;
+    p.__src = b;
+    p.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.body.appendChild(p);
+    hintPopPos(p);
+    window.addEventListener('scroll', hintPopSync, true);
+    window.addEventListener('resize', hintPopSync);
+}
+// 滚动/缩放时跟随问号按钮重新定位；按钮已从 DOM 移除（如弹窗关闭）则连带收起
+function hintPopSync() {
+    var p = document.getElementById('hintPop');
+    if (!p) return;
+    if (!p.__src || !p.__src.isConnected) { hintPopClose(); return; }
+    hintPopPos(p);
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.hint-pop')) return;
+    hintPopClose();
+});
+// ===== 全局「⚙ 管理 ▾」二级菜单开关（classes/projects/project_view 卡片与工具栏共用；展开时抬升所在卡片层级避免遮挡） =====
+function toggleDD(e, btn) {
+    e.stopPropagation();
+    var dd = btn.closest('.admin-dd');
+    if (!dd) return;
+    var wasOpen = dd.classList.contains('open');
+    document.querySelectorAll('.admin-dd.open').forEach(function (d) {
+        d.classList.remove('open');
+        var card = d.closest('.item-card');
+        if (card) card.classList.remove('dd-top');
+    });
+    if (!wasOpen) {
+        dd.classList.add('open');
+        var card = dd.closest('.item-card');
+        if (card) card.classList.add('dd-top');
+    }
+    btn.classList.toggle('active', dd.classList.contains('open'));   // project_view ⚙ 按钮高亮态
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.pv-dd')) return;   // project_view ⚙ 视图工具条自管（内部点击不收起）
+    document.querySelectorAll('.admin-dd.open').forEach(function (d) {
+        d.classList.remove('open');
+        var card = d.closest('.item-card');
+        if (card) card.classList.remove('dd-top');
+    });
+});
+</script>
+<script>
+function togglePageHelp(open) {
+    var m = document.getElementById('pageHelpModal');
+    if (m) m.classList.toggle('show', open);
+}
+// 三组选项卡切换（班级管理/项目列表：我的 / 授权 / 其他）
+function switchCtxTab(btn, group, key) {
+    btn.parentElement.querySelectorAll('.ctx-tab').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    document.querySelectorAll('.ctx-tabpane[data-group="' + group + '"]').forEach(function (p) {
+        p.style.display = (p.getAttribute('data-key') === key) ? '' : 'none';
+    });
+}
+// 所有弹窗统一注入「最大化 / 还原」+「✕ 关闭」按钮（顺序：最大化 关闭；PC 自动宽高、手机 90%，均可一键撑满）
+(function () {
+    function initModalMaxBtns() {
+        document.querySelectorAll('.modal-mask .modal').forEach(function (m) {
+            if (m.querySelector('.modal-max-btn')) return;
+            var max = document.createElement('button');
+            max.type = 'button';
+            max.className = 'modal-max-btn';
+            max.title = '最大化 / 还原';
+            max.innerHTML = '&#x2922;';
+            max.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var maxed = m.classList.toggle('modal-max');
+                max.innerHTML = maxed ? '&#x2923;' : '&#x2922;';
+            });
+            m.appendChild(max);
+            // ✕ 关闭按钮（位于最大化右侧）：关闭所属弹窗，还原最大化状态并广播 modalclosed
+            var close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'modal-close-btn';
+            close.title = '关闭';
+            close.setAttribute('aria-label', '关闭');
+            close.innerHTML = '&#x2715;';
+            close.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var mask = m.closest('.modal-mask');
+                m.classList.remove('modal-max');
+                max.innerHTML = '&#x2922;';
+                if (mask) {
+                    mask.classList.remove('show');
+                    mask.dispatchEvent(new CustomEvent('modalclosed', { bubbles: false }));
+                }
+            });
+            m.appendChild(close);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initModalMaxBtns);
+    } else {
+        initModalMaxBtns();
+    }
+})();
+</script>
+</body>
+</html>
+

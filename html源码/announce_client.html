@@ -1,0 +1,1113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>班级喊话大屏</title>
+<script src="js/db.js"></script>
+<script src="js/common.js"></script>
+<script src="js/api_local.js"></script>
+<script src="js/sw_boot.js"></script>
+<style>
+html, body { margin:0; padding:0; height:100%; background:#0f1b2d; color:#fff; font-family:"Microsoft YaHei","PingFang SC",sans-serif; overflow:hidden; }
+
+/* 待机屏（屏保模式：大时钟自适应屏幕，作为默认展示） */
+#idle { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2.5vh; }
+#idle .clock { font-size:clamp(64px, 20vw, 34vh); font-weight:bold; letter-spacing:.04em; line-height:1; color:#fff; font-variant-numeric:tabular-nums; text-shadow:0 6px 30px rgba(0,20,60,.5); }
+#idle .date { font-size:clamp(18px, 3.4vw, 42px); color:#8fa9c9; letter-spacing:2px; }
+#idle .cls { font-size:clamp(22px, 3.6vw, 48px); font-weight:bold; letter-spacing:6px; margin-top:2.5vh; }
+#idle .st { font-size:clamp(14px, 1.6vw, 20px); color:#5f7a9d; }
+#idle .tst { font-size:clamp(16px, 1.9vw, 24px); font-weight:bold; }
+
+/* 首次交互开启声音（浏览器自动播放限制） */
+#unlock { position:fixed; inset:0; z-index:60; background:rgba(5,12,22,.96); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; cursor:pointer; }
+#unlock .icon { font-size:88px; }
+#unlock .t1 { font-size:32px; font-weight:bold; }
+#unlock .t2 { font-size:17px; color:#8fa9c9; }
+
+/* 蓝色全屏大字层（直接呈现 / 语音播报同步字幕）：参照班级大屏效果——发送人 + 倒计时徽标 + 居中超大字 + 右下角关闭 */
+#big { position:fixed; inset:0; z-index:20; background:linear-gradient(160deg,#1a6fe8 0%,#0f56c0 100%); display:none; flex-direction:column; align-items:center; justify-content:center; padding:4vh 5vw 11vh; text-align:center; }
+#bigHead { font-size:clamp(16px, 2.4vw, 30px); color:rgba(255,255,255,.88); letter-spacing:1px; margin-bottom:3.5vh; }
+#bigHead .cd { display:inline-block; min-width:58px; padding:2px 14px; border-radius:16px; background:rgba(255,255,255,.22); font-variant-numeric:tabular-nums; }
+#bigTxt { color:#fff; font-weight:bold; line-height:1.45; white-space:pre-wrap; word-break:break-word; text-shadow:0 3px 10px rgba(0,40,110,.35); }
+/* 语音录音播放声浪动画（audio 类型消息展示用） */
+#bigTxt .audEq { display:flex; align-items:flex-end; justify-content:center; gap:7px; height:clamp(48px, 9vh, 88px); margin-bottom:3vh; }
+#bigTxt .audEq i { width:clamp(8px, 1vw, 14px); background:#fff; border-radius:6px; height:30%; animation:audEq 0.9s ease-in-out infinite; }
+@keyframes audEq { 0%,100% { height:22%; opacity:.75; } 50% { height:100%; opacity:1; } }
+#bigBtns { position:absolute; right:18px; bottom:14px; display:flex; gap:10px; }
+#bigBtns button, #imgvBtns button { background:rgba(255,255,255,.2); border:0; color:#fff; padding:7px 18px; border-radius:18px; font-size:14px; cursor:pointer; font-family:inherit; }
+#bigBtns button:hover, #imgvBtns button:hover { background:rgba(255,255,255,.32); }
+
+/* 回复区（需反馈喊话）：位于「停止/重播/关闭」上方，反馈后才开始计算自动最小化；关闭视同「无法处理」 */
+#ackBox { position:fixed; right:18px; bottom:62px; z-index:30; display:none; align-items:center; gap:10px; }
+#ackBox .tip { font-size:15px; color:rgba(255,255,255,.9); text-shadow:0 1px 6px rgba(0,40,110,.4); }
+#ackBox button { background:rgba(255,255,255,.2); border:0; color:#fff; padding:9px 22px; border-radius:20px; font-size:15px; font-weight:bold; cursor:pointer; font-family:inherit; }
+#ackBox button:hover { background:rgba(255,255,255,.32); }
+#ackBox button.ok { background:rgba(39,174,96,.85); }
+#ackBox button.ok:hover { background:rgba(39,174,96,1); }
+#ackBox button.no { background:rgba(192,57,43,.8); }
+#ackBox button.no:hover { background:rgba(192,57,43,.95); }
+
+/* 顶部 LED 跑马灯条 */
+#bar { position:fixed; top:0; left:0; right:0; z-index:30; display:none; background:#000; border-bottom:2px solid #222; overflow:hidden; padding:14px 0; }
+#barTxt { display:inline-block; white-space:nowrap; color:#ffe600; font-weight:bold; padding-left:100vw; animation:annmarq 20s linear infinite; }
+@keyframes annmarq { 0% { transform:translateX(0); } 100% { transform:translateX(-100%); } }
+
+/* 断线提示 */
+#offline { position:fixed; bottom:12px; left:50%; transform:translateX(-50%); z-index:50; display:none; background:#c0392b; color:#fff; padding:6px 16px; border-radius:20px; font-size:14px; }
+#voiceWarn { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:60; display:none; background:rgba(230,126,34,.95); color:#fff; padding:8px 18px; border-radius:20px; font-size:15px; max-width:86vw; text-align:center; }
+
+/* 待机缩小徽标（自动最小化后点击恢复全屏） */
+#mini { position:fixed; right:14px; bottom:14px; z-index:40; display:none; background:rgba(39,174,96,.92); color:#fff; padding:8px 14px; border-radius:20px; font-size:14px; cursor:pointer; }
+
+/* 图片查看层（全屏浏览：拖拽移动 / 滚轮与双指缩放 / 下载 / 底部缩略图切换） */
+#imgv { position:fixed; inset:0; z-index:25; display:none; flex-direction:column; background:#060b14; }
+#imgvStage { flex:1; overflow:hidden; display:flex; align-items:center; justify-content:center; touch-action:none; cursor:grab; }
+#imgvStage.drag { cursor:grabbing; }
+#imgvImg { max-width:92%; max-height:92%; user-select:none; -webkit-user-drag:none; transform-origin:center center; will-change:transform; }
+#imgvCnt { position:absolute; top:14px; left:18px; z-index:2; font-size:16px; color:rgba(255,255,255,.78); background:rgba(0,0,0,.35); padding:3px 12px; border-radius:14px; }
+#imgvBtns { position:absolute; top:12px; right:16px; z-index:2; display:flex; gap:10px; }
+#imgvThumbs { display:flex; gap:8px; padding:10px 12px 14px; overflow-x:auto; justify-content:center; }
+#imgvThumbs img { width:72px; height:48px; object-fit:cover; border-radius:6px; border:2px solid transparent; cursor:pointer; opacity:.65; }
+#imgvThumbs img.cur { border-color:#1a6fe8; opacity:1; }
+
+/* 反向喊话（班级 → 教师端）：入口按钮 + 编辑弹窗 */
+#revBtn { position:fixed; left:14px; bottom:14px; z-index:40; background:rgba(102,126,234,.92); color:#fff; border:0; padding:10px 18px; border-radius:22px; font-size:15px; font-weight:bold; cursor:pointer; }
+#revBtn:hover { background:rgba(102,126,234,1); }
+#revMask { position:fixed; inset:0; z-index:70; background:rgba(3,8,16,.82); display:none; align-items:center; justify-content:center; }
+#revMask.show { display:flex; }
+#revModal { width:440px; max-width:92vw; max-height:88vh; overflow-y:auto; background:#152238; border:1px solid #2c3e5c; border-radius:14px; padding:20px 22px; }
+#revModal h3 { margin:0 0 12px; font-size:20px; }
+#revModal label { font-size:14px; color:#aebfd8; }
+#revModal textarea, #revModal input[type=number] { width:100%; box-sizing:border-box; background:#0d1729; color:#fff; border:1px solid #2c3e5c; border-radius:8px; padding:9px 11px; font-size:15px; margin-top:5px; font-family:inherit; }
+#revModal .row { margin-top:12px; }
+#revModal .opts label { margin-right:14px; cursor:pointer; }
+#revSend { width:100%; margin-top:16px; background:#27ae60; color:#fff; border:0; border-radius:8px; padding:11px 0; font-size:16px; font-weight:bold; cursor:pointer; }
+#revTip { margin-top:10px; font-size:13px; color:#7fd49a; min-height:18px; }
+#revTip.err { color:#e07b6f; }
+</style>
+</head>
+<body>
+
+<div id="idle">
+    <div class="clock" id="clock">--:--</div>
+    <div class="date" id="idate"></div>
+    <div class="cls" id="clsName">📣 …</div>
+    <div class="st tst" id="tState">教师状态获取中…</div>
+    <div class="st" id="idleSt">喊话客户端运行中，等待教师端指令…</div>
+</div>
+
+<div id="unlock">
+    <div class="icon">🔊</div>
+    <div class="t1">点击开启声音</div>
+    <div class="t2">浏览器要求首次播报需手动确认，点击任意位置开启后即可接收教师喊话</div>
+</div>
+
+<div id="big">
+    <div id="bigHead"><span id="bigSender"></span>发送：<span class="cd" id="bigCd"></span></div>
+    <div id="bigTxt"></div>
+    <div id="bigBtns">
+        <button type="button" id="bigStopBtn" style="display:none;" onclick="annStopVoice()">⏹ 停止</button>
+        <button type="button" id="bigReplayBtn" style="display:none;" onclick="annReplayVoice()">🔁 重播</button>
+        <button type="button" onclick="annMinimize()">关闭</button>
+    </div>
+</div>
+<div id="bar"><span id="barTxt"></span></div>
+<div id="offline">⚠ 连接断开，正在重试…</div>
+<div id="mini" onclick="annResume()">📣 喊话已收起，点击恢复</div>
+<!-- 需反馈回复区：固定页面右下角常驻（跑马灯 / 待机时钟 / 全屏大字均可反馈，位于「喊话已收起」恢复按钮上方） -->
+<div id="ackBox">
+    <span class="tip">请反馈：</span>
+    <button type="button" class="ok" onclick="ackSend(1)">√ 确认收到</button>
+    <button type="button" class="no" onclick="ackSend(2)">X 无法处理</button>
+</div>
+<div id="voiceWarn">⚠ 语音播报失败（浏览器或音色限制），本次仅显示字幕</div>
+
+<!-- 图片查看层：全屏 / 拖拽 / 缩放 / 下载 / 底部缩略图切换 -->
+<div id="imgv">
+    <div id="imgvCnt"></div>
+    <div id="imgvBtns">
+        <button type="button" onclick="tryFullscreen()">⛶ 全屏</button>
+        <button type="button" id="imgvDl">⬇ 下载</button>
+        <button type="button" onclick="annMinimize()">关闭</button>
+    </div>
+    <div id="imgvStage"><img id="imgvImg" alt=""></div>
+    <div id="imgvThumbs"></div>
+</div>
+
+<!-- 反向喊话入口（教师端开启后显示）：班级 → 教师端 -->
+<button type="button" id="revBtn" style="display:none;" onclick="revOpen()">↩️ 反向喊话教师</button>
+<div id="revMask" onclick="if(event.target===this)revClose()">
+    <div id="revModal" style="position:relative;">
+        <h3>↩️ 反向喊话教师端</h3>
+        <div class="row opts" id="revTypeRow">
+            <label>喊话方式：</label>
+            <label style="cursor:pointer;"><input type="radio" name="revType" value="voice" checked autocomplete="off"> 🔊 语音播报</label>
+            <label style="cursor:pointer;"><input type="radio" name="revType" value="text" autocomplete="off"> 📝 文字字幕</label>
+        </div>
+        <div class="row">
+            <label>喊话内容（发送到教师端屏幕并播报）</label>
+            <textarea id="revContent" rows="3" maxlength="200" placeholder="例如：老师，多媒体设备打不开了。"></textarea>
+        </div>
+        <div class="row opts" id="revVoiceRow" style="display:none;">
+            <label>播报次数：
+                <select id="revTimes" style="background:#0d1729;color:#fff;border:1px solid #2c3e5c;border-radius:8px;padding:6px 8px;">
+                    <option value="1">1 次</option><option value="2">2 次</option><option value="3">3 次</option>
+                </select>
+            </label>
+        </div>
+        <div class="row opts" id="revTextRow" style="display:none;">
+            <label>字幕字号：<input type="number" id="revFont" min="24" max="120" value="48" style="width:90px;" autocomplete="off"> px</label>
+            <label style="display:block;margin-top:8px;cursor:pointer;"><input type="checkbox" id="revMarquee" autocomplete="off"> LED 跑马灯滚动（教师端顶部横幅）</label>
+        </div>
+        <button type="button" id="revSend" onclick="revSend()">🚀 发送给教师端</button>
+        <div id="revTip"></div>
+        <button type="button" onclick="revClose()" style="position:absolute;top:10px;right:12px;background:none;border:0;color:#8fa9c9;font-size:18px;cursor:pointer;">✕</button>
+    </div>
+</div>
+
+<script>
+// ===== 本地版启动：URL ?t= 令牌 → IndexedDB classes.announce_token 匹配班级 =====
+// 原版为服务端渲染（TOKEN/班级名/反向喊话配置由 PHP 注入，令牌无效直接 die）；
+// 单机版无服务端，全部改由页面启动时查库完成，校验与文案与原版 die 输出一致。
+var TOKEN = (new URLSearchParams(location.search)).get('t') || '';
+var CLS = null;                 // 匹配到的班级行
+var CID = 0;                    // 班级 id（BroadcastChannel 频道用）
+
+function showFatal(h2, p) {   // 原版 die 文案页
+    document.body.innerHTML = '<div style="font-family:sans-serif;text-align:center;padding-top:80px;"><h2>' + h2 + '</h2><p>' + p + '</p></div>';
+    throw new Error('fatal');
+}
+
+// ===== 本地资源解析：localfile.php?name=xxx → Blob objectURL（file:// 下 img/audio src 无法被 fetch patch 接管，统一预解析） =====
+var localUrlCache = {};
+function resolveLocal(u) {
+    u = String(u || '');
+    if (!/(^|\/|\\)localfile\.php(\?|#|$)/.test(u)) return Promise.resolve(u);
+    if (localUrlCache[u]) return Promise.resolve(localUrlCache[u]);
+    return fetch(u).then(function (r) { return r.blob(); }).then(function (b) {
+        var url = URL.createObjectURL(b);
+        localUrlCache[u] = url;
+        return url;
+    }).catch(function () { return u; });
+}
+
+// ===== 消息标准化：本地层 announce_poll 返回 DB 原始行（缺展示参数），补默认值容错 =====
+function normalizeMsg(m) {
+    m = m || {};
+    return {
+        id: m.id, mtype: String(m.mtype || 'text'),
+        content: String(m.content == null ? '' : m.content),
+        file: String(m.file || ''),
+        font_size: parseInt(m.font_size, 10) || 0,
+        marquee: parseInt(m.marquee, 10) || 0,
+        sub_big: parseInt(m.sub_big, 10) || 0,
+        force_show: parseInt(m.force_show, 10) || 0,
+        auto_min: parseInt(m.auto_min, 10) || 0,
+        cache_min: parseInt(m.cache_min, 10) || 0,
+        need_ack: parseInt(m.need_ack, 10) || 0,
+        speed: parseFloat(m.speed) || 1,
+        pitch: parseFloat(m.pitch) || 1,
+        times: parseInt(m.times, 10) || 1,
+        voice_name: String(m.voice_name || ''),
+        sender_name: String(m.sender_name || '')
+    };
+}
+
+var seen = {};                                  // 已处理指令 id（去重）
+try {
+    (JSON.parse(localStorage.getItem('ann_seen') || '[]')).forEach(function (id) { seen[id] = 1; });
+} catch (e) {}
+var seenKeys = Object.keys(seen);
+
+// ===== 设备心跳标识（did 持久化；dtype 按 UA 区分 PC / 手机） =====
+var DID = (function () {
+    var v = '';
+    try { v = localStorage.getItem('ann_did') || ''; } catch (e) {}
+    if (!/^[0-9a-f]{32}$/.test(v)) {
+        v = '';
+        for (var i = 0; i < 32; i++) v += '0123456789abcdef'.charAt(Math.floor(Math.random() * 16));
+        try { localStorage.setItem('ann_did', v); } catch (e) {}
+    }
+    return v;
+})();
+var DTYPE = /Mobi|Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) ? 'phone' : 'pc';
+
+// ===== 提示音「叮咚」+ 2 秒缓冲：任何语音/跑马灯/字幕播报前先响一声（提醒全班注意），停 2 秒后再播内容 =====
+var audioCtx = null;
+function dingDong(cb) {
+    try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        var t0 = audioCtx.currentTime + 0.02;
+        [[988, 0], [659, 0.35]].forEach(function (p) {   // 「叮」高音(B5) →「咚」低音(E5)
+            var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.type = 'sine'; o.frequency.value = p[0];
+            g.gain.setValueAtTime(0.0001, t0 + p[1]);
+            g.gain.exponentialRampToValueAtTime(0.55, t0 + p[1] + 0.04);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + p[1] + 0.55);
+            o.connect(g); g.connect(audioCtx.destination);
+            o.start(t0 + p[1]); o.stop(t0 + p[1] + 0.6);
+        });
+    } catch (e) {}   // 音频不可用（未解锁等）不影响流程：仍按 2 秒缓冲后播报
+    setTimeout(cb, 2000);
+}
+
+// ===== 首次交互解锁 TTS（自动播放限制）=====
+var unlockEl = document.getElementById('unlock');
+var unlocked = false;
+unlockEl.addEventListener('click', function () {
+    unlocked = true;
+    this.style.display = 'none';
+    try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}   // 顺带解锁提示音
+    audioKeepAlive();   // 后台防节流保活（点击手势中启动音频）
+    try { if ('Notification' in window && Notification.permission === 'default') { Notification.requestPermission(); } } catch (e) {}   // 顺带请求系统通知权限（最小化时 toast 提醒）
+    if ('speechSynthesis' in window) { try { speechSynthesis.speak(new SpeechSynthesisUtterance(' ')); } catch (e) {} }
+    if (speakQ.length && !speaking) pumpSpeak();   // 解锁后继续待播队列
+    if (audQ.length && !audPlaying) pumpAudio();   // 解锁后继续待播录音
+});
+
+// ===== 设备语音播报支持检测（上报教师端；无 TTS 或无音色则提示） =====
+var VSUP = ('speechSynthesis' in window) ? 1 : 0;
+var voiceWarnEl = document.getElementById('voiceWarn'), voiceWarnTimer = null;
+function voiceWarnShow(msg, keep) {   // 语音异常提示条；keep=true 常驻（设备不支持语音）
+    voiceWarnEl.textContent = msg;
+    voiceWarnEl.style.display = 'block';
+    clearTimeout(voiceWarnTimer);
+    if (!keep) voiceWarnTimer = setTimeout(function () { voiceWarnEl.style.display = 'none'; }, 6000);
+}
+if ('speechSynthesis' in window) {
+    speechSynthesis.onvoiceschanged = function () { VSUP = speechSynthesis.getVoices().length > 0 ? 1 : 0; };
+    setTimeout(function () {   // 音色列表 3 秒后仍为空：视为不支持语音（部分浏览器需手势后才有音色）
+        VSUP = speechSynthesis.getVoices().length > 0 ? 1 : 0;
+        if (!VSUP) voiceWarnShow('🔇 此设备当前无可用语音音色，语音喊话将仅显示字幕（点击大屏任意位置后再试）', true);
+    }, 3000);
+} else {
+    setTimeout(function () { voiceWarnShow('🔇 此设备不支持语音播报，语音喊话将仅显示字幕', true); }, 500);
+}
+
+// ===== 待机屏保时钟（大字自适应）+ 教师在线状态 =====
+function tickClock() {
+    var d = new Date();
+    document.getElementById('clock').textContent = d.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('idate').textContent = d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+}
+tickClock(); setInterval(tickClock, 1000);
+var tStateEl = document.getElementById('tState');
+function showTeacherOnline(on) {
+    tStateEl.textContent = on ? '🟢 教师在线' : '⚪ 教师不在线';
+    tStateEl.style.color = on ? '#7fd49a' : '#5f7a9d';
+}
+
+// ===== 屏幕控制 =====
+var bigEl = document.getElementById('big');
+var bigSenderEl = document.getElementById('bigSender');
+var bigCdEl = document.getElementById('bigCd');
+var bigTxtEl = document.getElementById('bigTxt');
+var bigStopBtn = document.getElementById('bigStopBtn');
+var bigReplayBtn = document.getElementById('bigReplayBtn');
+var barEl = document.getElementById('bar');
+var barTxt = document.getElementById('barTxt');
+var miniEl = document.getElementById('mini');
+var curText = null;       // 常驻字幕 {content, font_size, marquee, force_full, auto_min, sender_name, cache_min}
+var curVoice = null;      // 当前正在播报的语音消息（重播用）
+var annStopped = false;   // 停止标记：终止后收尾走快速通道
+var voiceTimer = null;    // 语音文本收起定时
+var minTimer = null;      // 自动最小化定时
+var cdTimer = null;       // 大字层倒计时定时
+var marqBigTimer = null;  // 跑马灯阶段定时：跑满指定秒数后切全屏/收起
+var marqPhase = null;     // 跑马灯阶段进行中（语音收尾不得打断跑马灯，直至阶段结束）
+
+// ===== 最近展示缓存（收起/刷新后可点「喊话已收起 点击恢复」还原全屏；cache_min 分钟后过期，0=不缓存） =====
+var ANN_LAST_KEY = 'ann_last_' + TOKEN;
+var lastCache = null;
+function annLastSet(o) {
+    var min = parseInt(o && o.cache_min, 10);
+    if (!o || isNaN(min) || min <= 0) return;   // cache_min=0：不缓存
+    o.expire = Date.now() + min * 60000;
+    lastCache = o;
+    try { localStorage.setItem(ANN_LAST_KEY, JSON.stringify(o)); } catch (e) {}
+}
+function annLastGet() {
+    if (lastCache) return lastCache.expire > Date.now() ? lastCache : (lastCache = null);
+    var o = null;
+    try { o = JSON.parse(localStorage.getItem(ANN_LAST_KEY) || 'null'); } catch (e) {}
+    if (o && o.expire > Date.now()) { lastCache = o; return o; }
+    return null;
+}
+// 页面刷新后若有未过期缓存：直接显示恢复徽标（点击「喊话已收起」还原全屏文字/图片，不丢失）
+if (annLastGet()) miniEl.style.display = 'block';
+
+// 自适应字号：在蓝色全屏内尽量放大文字（估算行数，超出屏幕则逐级缩小）
+function autoFont(text) {
+    var W = window.innerWidth, H = window.innerHeight;
+    var fs = Math.floor(Math.min(W / 4.5, H / 3));
+    var paras = String(text).split('\n');
+    function linesAt(f) {
+        var L = 0;
+        paras.forEach(function (p) { L += Math.max(1, Math.ceil((p.length * f) / (W * 0.88))); });
+        return L;
+    }
+    while (fs > 26 && linesAt(fs) * fs * 1.42 > H * 0.78) fs -= 2;
+    return fs;
+}
+// 蓝色全屏大字：sender=发送人；opts: {cd:倒计时秒, tag:无倒计时时徽标文案, font:设置字号, force:强制显示, cache_min:缓存分钟, noCache:恢复场景不重写缓存}
+function bigShow(text, sender, opts) {
+    opts = opts || {};
+    bigStopCd();
+    imgvHide();
+    bigEl.style.display = 'flex';
+    syncBigTop();
+    miniEl.style.display = 'none';
+    bigSenderEl.textContent = sender ? sender + ' ' : '';
+    if (opts.cd > 0) startCd(opts.cd);
+    else {
+        var tag = opts.tag || '';
+        bigCdEl.textContent = tag;
+        bigCdEl.style.display = tag ? '' : 'none';
+    }
+    bigTxtEl.textContent = text;
+    // 字号规则：设置值大于屏幕自适应 → 按自适应；设置值较小 → 按设置值
+    var fs = autoFont(text);
+    if (opts.font && opts.font > 0) fs = Math.min(opts.font, fs);
+    bigTxtEl.style.fontSize = fs + 'px';
+    if (!opts.noCache) {
+        annLastSet({ kind: 'text', content: text, sender: sender || '', font: opts.font || 0, force: !!opts.force, cache_min: opts.cache_min });
+    }
+    ackSync();   // 大字层显示：有待反馈消息时显示回复区
+}
+// 大字层倒计时徽标（auto_min 自动收起；需反馈消息在反馈后才启动）
+function startCd(sec) {
+    bigStopCd();
+    var left = sec;
+    bigCdEl.style.display = '';
+    bigCdEl.textContent = left + 's';
+    cdTimer = setInterval(function () {
+        left--;
+        if (left <= 0) { bigStopCd(); annMinimize(); return; }
+        bigCdEl.textContent = left + 's';
+    }, 1000);
+}
+function bigStopCd() { if (cdTimer) { clearInterval(cdTimer); cdTimer = null; } }
+function bigHide() { bigStopCd(); clearTimeout(marqBigTimer); marqPhase = null; bigEl.style.display = 'none'; }
+
+// ===== 需反馈（√确认收到 / X无法处理）：反馈后才开始计算自动最小化倒计时；点「关闭」视同「无法处理」 =====
+var ackBox = document.getElementById('ackBox');
+var ackPending = null;   // 当前待反馈消息 {id, auto_min, replied}（跟随当前正在大屏展示的指令）
+function ackReset(m) {   // 每条指令展示时更新：need_ack 挂起待反馈；否则清空
+    if (m && m.need_ack) ackPending = { id: m.id, auto_min: m.auto_min, replied: false };
+    else ackPending = null;
+    ackSync();
+}
+function ackSync() {   // 有待反馈消息且未反馈 → 回复区固定右下角常驻（跑马灯/待机/全屏均可反馈；显隐只由 ackReset/ackSend 控制）
+    if (ackBox) ackBox.style.display = (ackPending && !ackPending.replied) ? 'flex' : 'none';
+}
+function ackSend(st) {   // st: 1=确认收到 2=无法处理（关闭视同 2）；上报后才开始 auto_min 倒计时
+    if (!ackPending || ackPending.replied) return;
+    ackPending.replied = true;
+    var min = ackPending.auto_min;
+    ackBox.style.display = 'none';
+    // id=原版参数名；msg_id=本地层（api_local announce_ack）读取的参数名，两者同值兼容
+    fetch('api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'type=announce_ack&token=' + TOKEN + '&id=' + ackPending.id + '&msg_id=' + ackPending.id + '&st=' + st
+    }).catch(function () {});
+    if (bigEl.style.display === 'flex') {   // 反馈结果徽标
+        bigStopCd();
+        bigCdEl.style.display = '';
+        bigCdEl.textContent = st === 1 ? '✅ 已确认' : '❌ 无法处理';
+    }
+    // 反馈后才开始计算自动最小化
+    if (min > 0) { startCd(min); minTimer = setTimeout(annMinimize, min * 1000); }
+}
+
+// 跑马灯与全屏大字同显时：大字层整体下移到跑马灯条下方，两者上下分区不遮挡
+function syncBigTop() {
+    bigEl.style.top = (bigEl.style.display === 'flex' && barEl.style.display === 'block') ? barEl.offsetHeight + 'px' : '0';
+}
+
+// 顶部跑马灯条
+function startBar(text, fs) {
+    imgvHide();
+    miniEl.style.display = 'none';
+    barEl.style.display = 'block';
+    syncBigTop();
+    barTxt.textContent = text;
+    barTxt.style.fontSize = (fs || 64) + 'px';
+    barTxt.style.animation = 'none';
+    void barTxt.offsetWidth;      // 重启动画
+    barTxt.style.paddingLeft = '100vw';
+    barTxt.style.animation = 'annmarq ' + Math.max(8, text.length * 0.45) + 's linear infinite';
+}
+function stopBar() { marqPhase = null; barEl.style.display = 'none'; syncBigTop(); }
+
+// 跑马灯单次滚动时长（与 startBar 动画一致）
+function barDur(text) { return Math.max(8, String(text).length * 0.45) * 1000; }
+
+// 跑马灯阶段：跑马灯 + 待机时钟持续展示；未勾「需反馈」时跑满指定 N 秒（auto_min，未设置=单次跑完）后按「全屏字幕」决定切蓝色全屏或自动收起；
+// 未设置时长且未勾全屏字幕 = 无限循环，直至下一条指令或「清除字幕」；
+// 需反馈消息：跑马灯无限循环不切全屏（回复区固定页面右下角常驻，可直接反馈；反馈后才开始 auto_min 倒计时收起）
+function armMarqueePhase(text, autoMin, subBig, toBig, needAck) {
+    clearTimeout(marqBigTimer);
+    marqBigTimer = null;
+    var onePass = barDur(text) / 1000;
+    var sec = needAck ? 0 : (autoMin > 0 ? autoMin : (subBig ? onePass : 0));   // 需反馈：不切全屏不自动收起，跑马灯持续+右下角等反馈
+    marqPhase = { text: text };
+    if (sec <= 0) return;
+    marqBigTimer = setTimeout(function () {
+        marqBigTimer = null;
+        marqPhase = null;
+        stopBar();
+        if (toBig) toBig();
+        else annMinimize();
+    }, sec * 1000);
+}
+
+function renderText() {
+    clearTimeout(marqBigTimer);
+    if (!curText || !curText.content) { bigHide(); stopBar(); return; }
+    if (curText.marquee) {
+        // 跑马灯优先：上方滚动、下方待机时钟；跑满指定 N 秒（auto_min）后：勾了全屏字幕→切蓝色全屏常驻，未勾→自动收起；
+        // 需反馈：跑马灯持续滚动不切全屏，回复区固定右下角常驻等反馈（反馈后才开始倒计时收起）
+        bigHide();
+        startBar(curText.content, curText.font_size);
+        // 跑马灯也是「正在展示的内容」：写入恢复缓存，避免恢复按钮还停留上一次内容
+        annLastSet({ kind: 'text', content: curText.content, marquee: 1, sub_big: !!curText.sub_big, font: curText.font_size, force: curText.force_full, sender: curText.sender_name || '', cache_min: curText.cache_min });
+        armMarqueePhase(curText.content, curText.auto_min, !!curText.sub_big, function () {
+            bigShow(curText.content, curText.sender_name, { tag: curText.need_ack ? '待反馈' : '常驻', font: curText.font_size, force: curText.force_full, cache_min: curText.cache_min });
+        }, !!curText.need_ack);
+    } else {
+        stopBar();
+        bigShow(curText.content, curText.sender_name, { cd: (!curText.need_ack && curText.auto_min > 0) ? curText.auto_min : 0, tag: curText.need_ack ? '待反馈' : '常驻', font: curText.font_size, force: curText.force_full, cache_min: curText.cache_min });
+    }
+}
+
+// 语音播报：勾跑马灯 → 跑马灯优先（上方滚动、下方待机时钟），跑满指定 N 秒后：勾了全屏字幕再切蓝色大字（未勾→自动收起）；
+// 仅全屏字幕 → 直接蓝色大字；只勾语音（可+强制显示）→ 保持待机时钟朗读，右下角「喊话已收起 点击恢复」徽标可还原全屏字幕；
+// 强制显示 → forceShow() 浏览器全屏置前（时钟/跑马灯页面或大字均置前，含后台挂起补全屏）；需反馈 → 回复区固定页面右下角常驻，反馈后才开始倒计时收起
+function showVoice(m) {
+    clearTimeout(marqBigTimer);
+    ackReset(m);   // 需反馈指令挂起回复区（跟随当前播报的这条）
+    var wantBig = !!m.sub_big;   // 仅「+全屏字幕」→ 窗口内蓝色大字；强制显示不再兜底大字（保持时钟页面）
+    if (m.marquee) {
+        bigHide();
+        startBar(m.content, m.font_size);
+        // 跑马灯也是「正在展示的内容」：写入恢复缓存，避免恢复按钮还停留上一次内容
+        annLastSet({ kind: 'text', content: m.content, marquee: 1, sub_big: !!wantBig, font: m.font_size, force: false, sender: m.sender_name || '', cache_min: m.cache_min });
+        armMarqueePhase(m.content, m.auto_min, wantBig, function () {
+            bigShow(m.content, m.sender_name, { tag: m.need_ack ? '待反馈' : '🔊', font: m.font_size, force: false, cache_min: m.cache_min });
+        }, !!m.need_ack);
+    } else if (wantBig) {
+        bigShow(m.content, m.sender_name, { cd: (!m.need_ack && m.auto_min > 0) ? m.auto_min : 0, tag: m.need_ack ? '待反馈' : '🔊', font: m.font_size, force: m.force_show, cache_min: m.cache_min });
+    } else {
+        bigHide();
+        if (m.force_show) {   // 只勾语音+强制显示：时钟页面+语音朗读；写入恢复缓存并显示「点击恢复」徽标（点击=全屏字幕效果，恢复时为真实手势可成功全屏）
+            annLastSet({ kind: 'text', content: m.content, marquee: 0, sub_big: 1, font: m.font_size, force: true, sender: m.sender_name || '', cache_min: m.cache_min });
+            miniEl.style.display = 'block';
+        }
+    }
+    clearTimeout(voiceTimer);
+}
+
+// 自动最小化：浏览器无法真正最小化窗口，等效处理为退出全屏 + 收起显示 + 显示恢复徽标
+function autoMinimize(sec) {
+    clearTimeout(minTimer);
+    if (sec > 0) minTimer = setTimeout(annMinimize, sec * 1000);
+}
+function annMinimize() {
+    ackSend(2);   // 需反馈消息未反馈时点「关闭」：视同「X无法处理」上报（已反馈则内部直接跳过）
+    clearTimeout(voiceTimer);
+    marqPhase = null;
+    bigHide(); stopBar(); imgvHide();
+    if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
+    miniEl.style.display = 'block';
+    document.body.style.background = '#0f1b2d';
+}
+function annResume() {
+    miniEl.style.display = 'none';
+    var last = annLastGet();
+    if (last) {
+        if (last.kind === 'img' && last.imgs && last.imgs.length) {   // 恢复图片浏览
+            imgvShow(last.imgs, last.idx || 0, { force_show: last.force, cache_min: last.cache_min, noCache: true });
+            if (last.force) tryFullscreen();
+            return;
+        }
+        if (last.kind === 'audio' && last.url) {   // 恢复重播录音（点击时为真实手势，播放必成功）
+            audGen++;
+            if (audEl) { try { audEl.pause(); } catch (e) {} }
+            audPlaying = false;
+            annStopped = false;
+            clearTimeout(voiceTimer);
+            audQ.push({ content: last.url, sender_name: last.sender || '', force_show: false, auto_min: 0, cache_min: 0, need_ack: false, _noCache: true });
+            pumpAudio();
+            return;
+        }
+        if (last.content) {                                           // 恢复全屏大字 / 跑马灯
+            if (last.marquee) {   // 恢复=恢复跑马灯（跑马灯+待机时钟持续滚动，不再切全屏）
+                curText = { content: last.content, font_size: last.font || 64, marquee: 1, sub_big: false,
+                            force_full: false, auto_min: 0, sender_name: last.sender || '', cache_min: 0 };
+                renderText();
+                return;
+            }
+            bigShow(last.content, last.sender, { tag: '恢复', font: last.font, force: last.force, noCache: true });
+            if (last.force) tryFullscreen();
+            return;
+        }
+    }
+    renderText();   // 无缓存时回退到常驻字幕
+    if (curText && curText.content && curText.force_full) tryFullscreen();
+}
+function tryFullscreen() {
+    var el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(function () {});
+    else if (el.webkitRequestFullscreen) { try { el.webkitRequestFullscreen(); } catch (e) {} }
+}
+
+// ===== 强制显示兜底（force_show）：浏览器安全限制——页面最小化/后台时 requestFullscreen 会被拒绝，且无用户手势无法强行弹出置顶；
+// 采用组合方案尽量「确保能看到」：①收到指令立即尝试全屏；②处于后台时挂起标记 + 标题闪烁 + 系统通知（toast）提醒；
+// ③页面回到可见状态（点击任务栏/切回标签页）自动补全屏；④音频保活降低 Chrome 后台定时器深度节流（有声页面豁免 1 次/分钟限制） =====
+var forcePending = false, titleTimer = null;
+function forceShow() {
+    tryFullscreen();
+    if (document.hidden) {
+        forcePending = true;
+        titleFlash(true);
+        try {   // 系统通知：最小化时任务栏 toast 提醒教师点回页面（点回后自动补全屏）
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('📣 班级喊话', { body: '收到新的喊话内容，点击窗口回到页面即可自动全屏显示', tag: 'ann-force' });
+            }
+        } catch (e) {}
+    } else {
+        forcePending = false;
+        titleFlash(false);
+    }
+}
+document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    if (forcePending) { tryFullscreen(); forcePending = false; }   // 回到前台：补挂起的强制全屏
+    titleFlash(false);
+});
+function titleFlash(on) {   // 后台时浏览器标题闪烁「📣 新喊话」提醒
+    var base = document.title.replace(/^📣\s*/, '');
+    if (on && !titleTimer) {
+        var flip = false;
+        titleTimer = setInterval(function () { flip = !flip; document.title = (flip ? '📣 新喊话 ' : '') + base; }, 800);
+    } else if (!on && titleTimer) { clearInterval(titleTimer); titleTimer = null; document.title = base; }
+}
+function audioKeepAlive() {   // 音频保活：极低音量持续低频正弦（显示器/投影喇叭基本不可闻），让页面保持「有声」状态，
+                              // Chrome 不对有声页面做后台 intensive throttling，保证最小化后轮询与挂起补全屏仍及时
+    try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = 65;
+        g.gain.value = 0.008;
+        o.connect(g); g.connect(audioCtx.destination); o.start();
+    } catch (e) {}
+}
+
+// ===== 语音播放队列（顺序播报，不重叠；支持停止 / 重播） =====
+var speakQ = [], speaking = false, curUtter = null;
+var speakGen = 0;   // 起播代次：叮咚 2 秒等待期内被停止/重播/清空时，过期回调直接丢弃
+function annVoiceDone() {   // 播报收尾：跑马灯阶段中则保留跑马灯（收尾交给阶段定时器切全屏/收起）；否则回字幕/待机
+    annStopped = false;
+    bigHide();
+    bigStopBtn.style.display = 'none';
+    bigReplayBtn.style.display = 'none';
+    if (!marqPhase) { stopBar(); renderText(); }
+}
+function pumpSpeak() {
+    if (speaking || audPlaying || !speakQ.length) return;   // 录音播放中：排队等待（录音结束/停止后由 finish 续播）
+    if (!('speechSynthesis' in window)) {
+        speakQ = [];
+        voiceWarnShow('🔇 当前浏览器不支持语音播报，仅显示字幕内容');
+        return;
+    }
+    if (!unlocked) {   // 浏览器自动播放限制：未解锁时重新提示，点击后自动继续播报队列
+        unlockEl.style.display = '';
+        unlockEl.querySelector('.t1').textContent = '点击开启声音';
+        unlockEl.querySelector('.t2').textContent = '有新的语音喊话等待播放，点击任意位置解锁后自动播报';
+        return;
+    }
+    speaking = true;
+    var m = speakQ.shift();
+    var gen = ++speakGen;
+    curVoice = m;
+    curAud = null;   // 清除上一条录音引用：重播按钮始终对应当前播报内容
+    bigStopBtn.style.display = '';
+    bigReplayBtn.style.display = '';
+    dingDong(function () {   // 先响「叮咚」，停 2 秒后再展示+朗读
+        if (gen !== speakGen || !speaking) return;   // 等待期间被停止/重播：丢弃本次播报
+        showVoice(m);
+        if (m.force_show) forceShow();
+        // 跑马灯阶段中：展示时长由阶段定时器接管，不走自动最小化；需反馈：反馈后才开始倒计时
+        if (!marqPhase && !m.need_ack) autoMinimize(m.auto_min);
+    var n = 0;
+    var retried = false;
+    function pickLocalVoice() {   // 默认优先本地中文音色（Chrome 默认常走网络音色，离线/受限时会静默失败）
+        var vs = speechSynthesis.getVoices();
+        return vs.filter(function (v) { return v.localService && /^zh|cmn|yue/i.test(v.lang); })[0]
+            || vs.filter(function (v) { return v.localService; })[0] || null;
+    }
+    function afterSpeak(delay) {
+        speaking = false;
+        clearTimeout(voiceTimer);
+        // 朗读结束：设置了「自动最小化」时保持大字至倒计时收起（minTimer 已在开始播报时启动）；
+        // 需反馈：保持大字等待反馈（反馈后才启动倒计时）；未设置则短暂停留后回待机
+        if (!annStopped && (m.auto_min > 0 || m.need_ack)) { pumpSpeak(); return; }
+        voiceTimer = setTimeout(annVoiceDone, annStopped ? 400 : delay);
+        pumpSpeak();
+    }
+    function once() {
+        if (!String(m.content).trim()) {   // 空内容指令：仅提示音+展示层，无朗读（空文本 speak 部分浏览器不回调 onend）
+            afterSpeak(2000);
+            return;
+        }
+        var u = new SpeechSynthesisUtterance(m.content);
+        u._dead = false;   // 主动取消标记：cancel 触发的 onend/onerror 一律忽略（重试/停止/重播时置位）
+        curUtter = u;
+        u.rate = m.speed; u.pitch = m.pitch; u.lang = 'zh-CN';
+        if (m.voice_name && !retried) {   // 音色角色：优先同名本地音色（localService）；仅网络音色可用时放弃指定（回退默认，避免网络音色静默失败）
+            var vv = speechSynthesis.getVoices().filter(function (v) {
+                return (v.name === m.voice_name || v.voiceURI === m.voice_name) && v.localService;
+            })[0] || null;
+            if (vv) u.voice = vv;
+        }
+        if (!u.voice) { var lv = pickLocalVoice(); if (lv) u.voice = lv; }   // 未指定音色/重试：优先本地音色
+        u.onend = function () {
+            if (u._dead) return;
+            if (annStopped) { afterSpeak(400); return; }
+            n++;
+            if (n < m.times) setTimeout(once, 500);
+            else afterSpeak(8000);
+        };
+        u.onerror = function () {
+            if (u._dead || annStopped) return;   // 主动取消/已停止：交由收尾定时处理
+            if (!retried) {   // 首次失败：改用本地默认音色重试一次（常见于 Chrome 默认网络音色受限/离线）
+                retried = true;
+                u._dead = true;
+                try { speechSynthesis.cancel(); } catch (e) {}
+                setTimeout(once, 250);
+                return;
+            }
+            voiceWarnShow('⚠ 语音播报失败：本机无可用中文语音包（Windows：设置→时间和语言→语音→添加语音），本次仅显示字幕内容');
+            afterSpeak(0);
+        };
+        speechSynthesis.speak(u);
+        }
+        once();
+    });
+}
+function annStopVoice() {   // 停止：清空队列并终止当前朗读/录音播放
+    speakQ = []; audQ = [];
+    annStopped = true;
+    speakGen++; audGen++;   // 使叮咚等待中的起播回调失效
+    if (curUtter) curUtter._dead = true;
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    if (audEl) { try { audEl.pause(); } catch (e) {} }
+    audPlaying = false; curAud = null;
+    speaking = false;   // 旧 utterance 事件已忽略：直接复位，避免队列卡死
+    clearTimeout(voiceTimer);
+    voiceTimer = setTimeout(function () { if (!speaking && !audPlaying) annVoiceDone(); }, 400);   // 期间有新指令起播则不收尾
+}
+function annReplayVoice() { // 重播：终止当前并重新播放（录音优先，其次 TTS 朗读）
+    if (curAud) {
+        var am = curAud;
+        audGen++;   // 使当前播放的收尾回调失效
+        if (audEl) { try { audEl.pause(); } catch (e) {} }
+        audPlaying = false;
+        annStopped = false;
+        clearTimeout(voiceTimer);
+        audQ.unshift(am);
+        pumpAudio();
+        return;
+    }
+    if (!curVoice) return;
+    annStopped = false;
+    if (curUtter) curUtter._dead = true;
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    speaking = false;   // 旧 utterance 事件已忽略：直接复位后重新起播
+    clearTimeout(voiceTimer);
+    speakQ.unshift(curVoice);
+    pumpSpeak();
+}
+
+// ===== 语音录音播放队列（教师端录制的真实人声：先响叮咚，再自动播放；支持停止 / 重播） =====
+var audEl = null, audQ = [], audPlaying = false, curAud = null, audGen = 0;
+function audEnsure() {
+    if (!audEl) { audEl = new Audio(); audEl.preload = 'auto'; }
+    return audEl;
+}
+// 录音播放展示：蓝色全屏层 = 发送人 + 声浪动画 + 「语音喊话播放中」，停止/重播按钮与 TTS 共用
+function showAudDisp(m) {
+    bigStopCd();
+    imgvHide();
+    stopBar();
+    bigEl.style.display = 'flex';
+    syncBigTop();
+    miniEl.style.display = 'none';
+    bigSenderEl.textContent = m.sender_name ? m.sender_name + ' ' : '';
+    bigCdEl.style.display = m.need_ack ? '' : 'none';
+    bigCdEl.textContent = m.need_ack ? '待反馈' : '';
+    bigTxtEl.style.fontSize = 'clamp(30px, 5.5vw, 64px)';
+    var bars = '';
+    for (var i = 0; i < 5; i++) bars += '<i style="animation-delay:' + (i * 0.13).toFixed(2) + 's"></i>';
+    bigTxtEl.innerHTML = '<div class="audEq">' + bars + '</div>🎙 语音喊话播放中…';
+    if (!m._noCache) annLastSet({ kind: 'audio', url: m.content, sender: m.sender_name || '', force: !!m.force_show, cache_min: m.cache_min });
+    ackReset(m);   // 需反馈录音：挂起回复区（跟随当前播放的这条）；无需反馈则清空
+    ackSync();
+}
+function pumpAudio() {
+    if (audPlaying || !audQ.length) return;
+    if (speaking) { setTimeout(pumpAudio, 800); return; }   // TTS 播报中：排队等待
+    if (!unlocked) {   // 浏览器自动播放限制：未解锁时提示，点击后自动继续
+        unlockEl.style.display = '';
+        unlockEl.querySelector('.t1').textContent = '点击开启声音';
+        unlockEl.querySelector('.t2').textContent = '有新的语音喊话等待播放，点击任意位置解锁后自动播放';
+        return;
+    }
+    audPlaying = true;
+    var m = audQ.shift();
+    var gen = ++audGen;
+    curAud = m; curVoice = null;
+    bigStopBtn.style.display = '';
+    bigReplayBtn.style.display = '';
+    dingDong(function () {   // 先响「叮咚」，停 2 秒后再播放录音
+        if (gen !== audGen || !audPlaying) return;   // 等待期间被停止/重播：丢弃本次播放
+        showAudDisp(m);
+        if (m.force_show) forceShow();
+        if (!marqPhase && !m.need_ack) autoMinimize(m.auto_min);
+        var el = audEnsure();
+        el.src = m.content;
+        var finish = function (delay) {
+            audPlaying = false;
+            clearTimeout(voiceTimer);
+            if (!annStopped && (m.auto_min > 0 || m.need_ack)) { pumpAudio(); return; }   // 保持展示至倒计时收起/反馈
+            voiceTimer = setTimeout(function () { if (!speaking && !audPlaying) annVoiceDone(); }, annStopped ? 400 : delay);
+            pumpAudio();   // 继续下一条（录音/TTS 队列）
+            pumpSpeak();
+        };
+        el.onended = function () { if (gen === audGen) finish(4000); };
+        el.onerror = function () {
+            if (gen !== audGen) return;
+            voiceWarnShow('⚠ 语音录音播放失败，文件可能已被清理');
+            finish(1500);
+        };
+        var pp = el.play();
+        if (pp && pp.catch) pp.catch(function () {
+            if (gen !== audGen) return;
+            voiceWarnShow('⚠ 浏览器拦截了自动播放，点击大屏任意位置解锁后教师重发即可');
+            finish(1500);
+        });
+    });
+}
+
+// ===== 图片查看器（全屏 / 拖拽移动 / 滚轮与双指缩放 / 下载 / 底部缩略图切换） =====
+var imgvEl = document.getElementById('imgv'), imgvImgEl = document.getElementById('imgvImg');
+var imgvStage = document.getElementById('imgvStage'), imgvThumbs = document.getElementById('imgvThumbs');
+var imgvCnt = document.getElementById('imgvCnt'), imgvDl = document.getElementById('imgvDl');
+var curImgs = [], curIdx = 0, vScale = 1, vX = 0, vY = 0, pinchD = 0, ptrs = {};
+var imgvMeta = { force: false, cache_min: 60 };   // 当前图片消息的显示元数据（缓存/强制显示用）
+function imgvApply() { imgvImgEl.style.transform = 'translate(' + vX + 'px,' + vY + 'px) scale(' + vScale + ')'; }
+function imgvHide() { imgvEl.style.display = 'none'; }
+function imgvLoad() {
+    vScale = 1; vX = 0; vY = 0;
+    imgvApply();
+    imgvImgEl.src = curImgs[curIdx];
+    imgvCnt.textContent = (curIdx + 1) + ' / ' + curImgs.length;
+    imgvDl.onclick = function () {
+        var a = document.createElement('a');
+        a.href = curImgs[curIdx];
+        a.download = String(curImgs[curIdx]).split('/').pop() || ('image_' + (curIdx + 1));
+        document.body.appendChild(a); a.click(); a.remove();
+    };
+    Array.prototype.forEach.call(imgvThumbs.children, function (t, i) { t.className = i === curIdx ? 'cur' : ''; });
+}
+function renderThumbs() {
+    imgvThumbs.innerHTML = '';
+    curImgs.forEach(function (u, i) {
+        var t = document.createElement('img');
+        t.src = u;
+        t.onclick = function () {
+            curIdx = i;
+            imgvLoad();
+            annLastSet({ kind: 'img', imgs: curImgs, idx: curIdx, force: imgvMeta.force, cache_min: imgvMeta.cache_min });
+        };
+        imgvThumbs.appendChild(t);
+    });
+}
+function imgvShow(imgs, idx, m) {
+    curImgs = imgs;
+    curIdx = Math.max(0, Math.min(idx || 0, imgs.length - 1));
+    imgvMeta = { force: !!(m && m.force_show), cache_min: m ? m.cache_min : 60 };
+    bigHide(); stopBar();
+    imgvEl.style.display = 'flex';
+    miniEl.style.display = 'none';
+    imgvLoad();
+    renderThumbs();
+    if (!(m && m.noCache)) {
+        annLastSet({ kind: 'img', imgs: curImgs, idx: curIdx, force: imgvMeta.force, cache_min: imgvMeta.cache_min });
+    }
+}
+// 滚轮缩放
+imgvStage.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    vScale = Math.min(8, Math.max(0.2, vScale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    imgvApply();
+}, { passive: false });
+// 拖拽移动 + 双指捏合缩放（Pointer Events 统一处理鼠标/触摸）
+imgvStage.addEventListener('pointerdown', function (e) {
+    ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    try { imgvStage.setPointerCapture(e.pointerId); } catch (err) {}
+    imgvStage.classList.add('drag');
+    var ks = Object.keys(ptrs);
+    if (ks.length === 2) {
+        pinchD = Math.hypot(ptrs[ks[0]].x - ptrs[ks[1]].x, ptrs[ks[0]].y - ptrs[ks[1]].y);
+    }
+});
+imgvStage.addEventListener('pointermove', function (e) {
+    if (!ptrs[e.pointerId]) return;
+    var ks = Object.keys(ptrs);
+    if (ks.length === 2) {   // 双指捏合
+        ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+        var d = Math.hypot(ptrs[ks[0]].x - ptrs[ks[1]].x, ptrs[ks[0]].y - ptrs[ks[1]].y);
+        if (pinchD > 0 && d > 0) {
+            vScale = Math.min(8, Math.max(0.2, vScale * (d / pinchD)));
+            imgvApply();
+        }
+        pinchD = d;
+        return;
+    }
+    vX += e.clientX - ptrs[e.pointerId].x;
+    vY += e.clientY - ptrs[e.pointerId].y;
+    ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    imgvApply();
+});
+function imgvPtrUp(e) {
+    delete ptrs[e.pointerId];
+    pinchD = 0;
+    if (!Object.keys(ptrs).length) imgvStage.classList.remove('drag');
+}
+imgvStage.addEventListener('pointerup', imgvPtrUp);
+imgvStage.addEventListener('pointercancel', imgvPtrUp);
+
+// ===== 消息处理（原 poll 内 msgs.forEach 段抽出：轮询与 BroadcastChannel 实时共用） =====
+var textGen = 0;   // 字幕指令代次：叮咚 2 秒等待期内来了新指令则丢弃过期回调
+function handleMsg(m) {
+    if (seen[m.id]) return;   // 去重
+    seen[m.id] = 1;
+    seenKeys.push(m.id);
+    if (seenKeys.length > 200) { delete seen[seenKeys.shift()]; }
+    try { localStorage.setItem('ann_seen', JSON.stringify(seenKeys.slice(-200))); } catch (e) {}
+    if (m.mtype === 'voice') {
+        speakQ.push(m);
+        pumpSpeak();
+    } else if (m.mtype === 'audio') {   // 语音录音：真实人声文件，先叮咚后自动播放
+        // 本地层把音频路径存 file 字段；content 为空时回退 file，并预解析为可播放 URL
+        if (!m.content && m.file) m.content = m.file;
+        resolveLocal(m.content).then(function (url) {
+            m.content = url;
+            ackReset(null);
+            audQ.push(m);
+            pumpAudio();
+        });
+    } else if (m.mtype === 'img') {   // 图片：JSON URL 列表 → 全屏查看器（图片无需反馈）
+        ackReset(null);
+        var urls = [];
+        try { urls = JSON.parse(m.content || '[]'); } catch (e) {}
+        if (!Array.isArray(urls)) urls = [];
+        if (!urls.length && m.file) urls = [m.file];   // 本地层单图存 file 字段：content 为空时兜底
+        urls = urls.filter(function (u) { return typeof u === 'string' && u; });
+        if (!urls.length) return;
+        Promise.all(urls.map(resolveLocal)).then(function (resolved) {
+            imgvShow(resolved, 0, m);
+            if (m.force_show) forceShow();
+            autoMinimize(m.auto_min);
+        });
+    } else if (!m.content) {   // 清除字幕：立即执行，不响叮咚
+        curText = null;
+        ackReset(null);
+        renderText();
+        miniEl.style.display = 'none'; clearTimeout(minTimer);   // 清除字幕时一并收起徽标
+    } else {
+        var tgen = ++textGen;
+        dingDong(function () {   // 先响「叮咚」，停 2 秒后再展示字幕/跑马灯
+            if (tgen !== textGen) return;   // 等待期间来了新指令：丢弃过期回调
+            curText = {
+                content: m.content, font_size: m.font_size,
+                marquee: !!m.marquee,   // 勾跑马灯即跑马灯：强制显示只负责全屏置前，不再抢占为全屏大字
+                sub_big: m.sub_big,
+                force_full: m.force_show, auto_min: m.auto_min, sender_name: m.sender_name || '',
+                cache_min: m.cache_min, need_ack: !!m.need_ack
+            };
+            ackReset(curText.need_ack ? m : null);   // 需反馈字幕挂起回复区
+            renderText();
+            if (m.force_show) forceShow();
+            // 需反馈：收到后不倒计时，待班级端反馈（√确认收到/X无法处理）后才开始计算
+            if (!marqPhase && !m.need_ack) autoMinimize(m.auto_min);
+        });
+    }
+}
+
+// ===== 轮询取指令（并上报设备心跳；单机版另有 BroadcastChannel 实时推送，此处为兜底） =====
+var failCnt = 0, stopped = false, offlineEl = document.getElementById('offline'), idleSt = document.getElementById('idleSt');
+function poll() {
+    if (stopped) return;
+    fetch('api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'type=announce_poll&token=' + TOKEN + '&did=' + DID + '&dtype=' + DTYPE + '&vsup=' + VSUP
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+        if (!d || !d.success) {   // 令牌失效等业务错误：停止轮询并提示
+            stopped = true;
+            idleSt.textContent = d && d.message ? d.message : '连接异常';
+            idleSt.style.color = '#e07b6f';
+            return;
+        }
+        failCnt = 0;
+        offlineEl.style.display = 'none';
+        showTeacherOnline(!!d.teacher_online);
+        (d.msgs || []).forEach(function (raw) { handleMsg(normalizeMsg(raw)); });
+    })
+    .catch(function () {
+        failCnt++;
+        if (failCnt >= 3) offlineEl.style.display = 'block';
+    })
+    .then(function () { if (!stopped) setTimeout(poll, 3000); });   // 无论成败 3 秒后继续（令牌失效除外）
+}
+
+// ===== 反向喊话（班级 → 教师端）：弹窗编辑 + 发送 =====
+var revMaskEl = document.getElementById('revMask');
+function revSyncRows() {
+    var t = document.getElementById('revTypeFixed') ? document.getElementById('revTypeFixed').value
+          : (document.querySelector('input[name="revType"]:checked') || {}).value || 'voice';
+    document.getElementById('revVoiceRow').style.display = t === 'voice' ? '' : 'none';
+    document.getElementById('revTextRow').style.display = t === 'text' ? '' : 'none';
+}
+function revOpen() {
+    revMaskEl.classList.add('show');
+    revTip('');
+    document.getElementById('revContent').focus();
+    revSyncRows();
+    revLockTick();   // 打开弹窗刷新冷却锁定状态（30 秒内按钮禁用倒计时）
+}
+function revClose() { revMaskEl.classList.remove('show'); }
+function revTip(msg, isErr) {
+    var el = document.getElementById('revTip');
+    el.textContent = msg;
+    el.className = isErr ? 'err' : '';
+}
+(function () {   // 方式切换时联动字段行显隐
+    document.querySelectorAll('input[name="revType"]').forEach(function (r) { r.addEventListener('change', revSyncRows); });
+})();
+
+function revLastInfo() {   // 上次发送信息：{time,content}（localStorage 按令牌隔离；防连发轰炸）
+    var t = 0, c = '';
+    try { t = parseInt(localStorage.getItem('revLastT_' + TOKEN), 10) || 0; c = localStorage.getItem('revLastC_' + TOKEN) || ''; } catch (e) {}
+    return { time: t, content: c };
+}
+var REV_COOLDOWN = 30000;   // 冷却时长：30 秒内只能发送 1 次
+var revLockTimer = null;
+function revLockTick() {   // 冷却锁定：按钮禁用并倒计时，到期自动恢复
+    var btn = document.getElementById('revSend');
+    if (!btn) return;
+    var left = REV_COOLDOWN - (Date.now() - revLastInfo().time);
+    if (left > 0) {
+        btn.disabled = true;
+        btn.textContent = '⏳ ' + Math.ceil(left / 1000) + ' 秒后可再次发送';
+        if (!revLockTimer) revLockTimer = setInterval(revLockTick, 500);
+    } else {
+        btn.disabled = false;
+        btn.textContent = '🚀 发送给教师端';
+        if (revLockTimer) { clearInterval(revLockTimer); revLockTimer = null; }
+    }
+}
+
+function revSend() {
+    var content = document.getElementById('revContent').value.trim();
+    if (!content) { revTip('请输入喊话内容', true); return; }
+    var last = revLastInfo();
+    if (Date.now() - last.time < REV_COOLDOWN) { revTip('发送太频繁，请 ' + Math.ceil((REV_COOLDOWN - (Date.now() - last.time)) / 1000) + ' 秒后再试', true); return; }   // 30 秒冷却锁定
+    if (content === last.content && !window.confirm('和上次内容一样，确认发送？')) return;   // 同内容防呆
+    var t = document.getElementById('revTypeFixed') ? document.getElementById('revTypeFixed').value
+          : (document.querySelector('input[name="revType"]:checked') || {}).value || 'voice';
+    var body = 'type=announce_rev_send&token=' + TOKEN + '&mtype=' + t + '&content=' + encodeURIComponent(content);
+    if (t === 'voice') {
+        body += '&times=' + (parseInt(document.getElementById('revTimes').value, 10) || 1);
+    } else {
+        body += '&font_size=' + (parseInt(document.getElementById('revFont').value, 10) || 48)
+              + '&marquee=' + (document.getElementById('revMarquee').checked ? 1 : 0);
+    }
+    document.getElementById('revSend').disabled = true;
+    fetch('api.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+        document.getElementById('revSend').disabled = false;
+        if (!d || !d.success) { revTip((d && d.message) || '发送失败，请稍后再试', true); return; }
+        try { localStorage.setItem('revLastT_' + TOKEN, String(Date.now())); localStorage.setItem('revLastC_' + TOKEN, content); } catch (e) {}   // 记录发送时间与内容（同内容确认 + 30 秒冷却）
+        document.getElementById('revContent').value = '';
+        revTip('✔ 已发送，等待教师端接收');
+        revLockTick();   // 进入 30 秒冷却锁定
+        setTimeout(revClose, 1200);
+    })
+    .catch(function () { document.getElementById('revSend').disabled = false; revTip('网络错误，请稍后再试', true); });
+}
+
+// ===== 启动（原版由 PHP 服务端完成的部分：令牌校验 / 班级信息 / 反向喊话配置） =====
+(async function boot() {
+    // 令牌格式校验（与本地层 classIdByToken 同口径：32 位 hex）
+    TOKEN = String(TOKEN).replace(/[^0-9a-f]/g, '');
+    if (!/^[0-9a-f]{32}$/.test(TOKEN)) {
+        showFatal('链接无效', '喊话链接格式不正确，请联系教师重新复制。');
+        return;
+    }
+    try {
+        CLS = (await DB.find('classes', function (c) { return String(c.announce_token || '') === TOKEN && !c.deleted_at; }))[0] || null;
+    } catch (e) { CLS = null; }
+    if (!CLS) {
+        showFatal('链接已失效', '班级不存在或喊话令牌已重置，请联系教师重新复制链接。');
+        return;
+    }
+    CID = parseInt(CLS.id, 10) || 0;
+    document.title = '班级喊话大屏 - ' + String(CLS.name || '');
+    document.getElementById('clsName').textContent = '📣 ' + String(CLS.name || '');
+
+    // 反向喊话开关（原版 PHP if($rev_on) 渲染；单机版改 JS 显隐）：开启且至少勾选一种模式才显示
+    var revOn = parseInt(CLS.rev_announce, 10) === 1;
+    var revModes = String(CLS.rev_ann_modes || '').split(',').filter(function (s) { return s; });
+    var revVoice = revOn && revModes.indexOf('voice') >= 0;
+    var revText = revOn && revModes.indexOf('text') >= 0;
+    if (revOn && !revVoice && !revText) revOn = false;   // 未勾选任何模式视为关闭
+    if (revOn) {
+        document.getElementById('revBtn').style.display = '';
+        if (!(revVoice && revText)) {   // 仅一种模式：隐藏方式选择行，注入固定值（revSyncRows/revSend 优先读 revTypeFixed）
+            document.getElementById('revTypeRow').style.display = 'none';
+            var fixed = document.createElement('input');
+            fixed.type = 'hidden'; fixed.id = 'revTypeFixed'; fixed.value = revVoice ? 'voice' : 'text';
+            document.getElementById('revModal').appendChild(fixed);
+        }
+    }
+
+    // BroadcastChannel 实时接收（教师端发送后广播 {kind:'new',payload:{msg_id}}）→ 查库渲染
+    if (CID && typeof BroadcastChannel !== 'undefined') {
+        try {
+            var ch = new BroadcastChannel('qj_announce_' + CID);
+            ch.onmessage = function (ev) {
+                var d = ev && ev.data || {};
+                if (d.kind !== 'new' || !d.payload || !d.payload.msg_id) return;
+                DB.get('announce_msgs', d.payload.msg_id).then(function (row) {
+                    if (!row) return;
+                    handleMsg(normalizeMsg(row));
+                });
+            };
+        } catch (e) {}
+    }
+
+    poll();   // 启动轮询兜底
+})();
+</script>
+</body>
+</html>

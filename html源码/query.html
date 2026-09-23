@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登记信息查询 - 潜记二维码作业登记系统</title>
+    <link rel="stylesheet" href="css/style.css?v=20260915">
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="favicon.ico"/>
+    <script src="js/db.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/sw_boot.js"></script>
+    <style>
+        body { background: #f0f2f5; }
+        .query-wrap { max-width: 720px; margin: 30px auto; padding: 0 16px; }
+        .query-title { text-align: center; font-size: 22px; font-weight: bold; color: #333; margin-bottom: 6px; }
+        .query-sub { text-align: center; color: #888; font-size: 13px; margin-bottom: 20px; }
+        /* 选项卡 */
+        .qtabs { display: flex; background: #fff; border-radius: 12px 12px 0 0; padding: 6px 6px 0; gap: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .qt { flex: 1; border: 0; background: none; padding: 10px 0; font-size: 14.5px; color: #8891a5; cursor: pointer; border-bottom: 2.5px solid transparent; font-weight: bold; }
+        .qt.active { color: #667eea; border-bottom-color: #667eea; }
+        .qtab-body { background: #fff; border-radius: 0 0 12px 12px; padding: 12px 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        /* 折叠卡 */
+        .pcard { background: #fff; border: 1px solid #eef1f8; border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+        .pc-head { display: flex; align-items: center; gap: 8px; padding: 11px 12px; cursor: pointer; user-select: none; flex-wrap: wrap; }
+        .pc-head:hover { background: #fafbff; }
+        .pc-arrow { color: #b6bdcc; font-size: 12px; transition: transform .15s; display: inline-block; }
+        .pcard.open .pc-arrow { transform: rotate(90deg); }
+        .pc-name { font-weight: bold; font-size: 15px; color: #333; }
+        .pc-mode { font-size: 11px; border-radius: 9px; padding: 2px 9px; font-weight: bold; }
+        .pc-new { font-size: 11px; color: #fff; background: #e74c3c; border-radius: 9px; padding: 2px 8px; font-weight: bold; animation: pcblink 1.6s infinite; }
+        @keyframes pcblink { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+        .pc-mini { font-size: 12px; color: #98a0b3; margin-left: auto; text-align: right; }
+        .pc-body { display: none; padding: 4px 14px 12px; border-top: 1px dashed #eef1f8; }
+        .pcard.open .pc-body { display: block; }
+        .pc-line { font-size: 13px; color: #555; line-height: 1.9; }
+        .pc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
+        .chip { font-size: 11px; color: #555; background: #f4f5f7; border-radius: 6px; padding: 2px 7px; }
+        .chip.ev { color: #e67e22; background: #fef5ec; border: 1px solid #f8e3cc; }
+        .evc { color: #e67e22; font-weight: bold; }
+        /* 折中折 */
+        .sub { border: 1px solid #f0f2f8; border-radius: 8px; margin-top: 6px; overflow: hidden; }
+        .sub-h { display: flex; align-items: center; gap: 6px; padding: 8px 10px; font-size: 12.5px; color: #444; cursor: pointer; user-select: none; background: #fbfbfe; flex-wrap: wrap; }
+        .sub-h:hover { background: #f4f6fe; }
+        .sub-h.dim { color: #b6bdcc; }
+        .sub-h .pc-arrow { font-size: 10px; }
+        .sub.open .pc-arrow { transform: rotate(90deg); }
+        .sub-t { color: #b6bdcc; font-size: 11px; margin-left: auto; font-family: Consolas, Menlo, monospace; }
+        .sub-b { display: none; padding: 4px 10px 8px; }
+        .sub.open .sub-b { display: block; }
+        /* 表格（每日评价 / 每题作答） */
+        .qa-tb { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12.5px; }
+        .qa-tb th, .qa-tb td { border: 1px solid #e8eaf2; padding: 5px 8px; text-align: center; }
+        .qa-tb th { background: #f6f7fd; color: #555; }
+        .qa-tb td.evc { color: #e67e22; font-weight: bold; }
+        .qa-tb .okc { color: #27ae60; font-weight: bold; }
+        .qa-tb .ngc { color: #e74c3c; font-weight: bold; }
+        .flowbtn { margin-top: 8px; font-size: 12px; color: #667eea; background: none; border: 1px solid #dfe4fb; border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+        .flowbtn:hover { background: #eef1fd; }
+        .pc-flow { display: none; margin-top: 8px; border-top: 1px dashed #e8eaf2; padding-top: 8px; }
+        .pc-flow div { font-size: 12px; color: #555; line-height: 1.9; }
+        .pc-flow div b { color: #333; }
+        .pc-flow .ft { color: #999; font-family: Consolas, Menlo, monospace; margin-right: 6px; }
+        .pc-cm { margin-top: 8px; font-size: 12.5px; color: #4a6fa5; background: #f2f7ff; border: 1px solid #d9e6fb; border-radius: 8px; padding: 7px 10px; line-height: 1.7; }
+        /* 汇总卡片 */
+        .qsum { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; margin-bottom: 12px; }
+        .qsum .qs { background: #fff; border-radius: 12px; padding: 10px 12px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .qsum .qs b { display: block; font-size: 20px; color: #667eea; line-height: 1.3; }
+        .qsum .qs span { font-size: 11.5px; color: #98a0b3; }
+        @media (max-width: 480px) { .qsum { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+        /* 统计矩阵 */
+        .mx-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .mx-table { border-collapse: collapse; width: 100%; min-width: 480px; font-size: 12.5px; background: #fff; }
+        .mx-table th, .mx-table td { border: 1px solid #e8eaf2; padding: 6px 8px; text-align: center; white-space: nowrap; }
+        .mx-table th { background: #f6f7fd; color: #555; font-weight: bold; }
+        .mx-table td.mx-date { background: #fbfbfe; color: #333; font-weight: bold; }
+        .mx-table td.mx-date small { display: block; color: #98a0b3; font-weight: normal; font-size: 11px; }
+        .mx-ok { color: #27ae60; font-weight: bold; }
+        .mx-eval { color: #e67e22; font-weight: bold; }
+        .mx-ecol { color: #e67e22; font-size: 12px; max-width: 240px; white-space: normal; text-align: left; }
+        /* 综合报告 */
+        .rp-tb { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+        .rp-tb th, .rp-tb td { border-bottom: 1px solid #eef1f8; padding: 8px 6px; text-align: left; }
+        .rp-tb th { color: #8891a5; font-size: 12px; background: #fbfbfe; }
+        .rp-tb td b.rpn { color: #333; }
+        .cm-box { margin-top: 12px; }
+        .cm-box .cm-item { border-left: 3px solid #667eea; background: #f6f8ff; border-radius: 0 8px 8px 0; padding: 8px 12px; margin-top: 8px; }
+        .cm-box .cm-item b { font-size: 13px; color: #333; }
+        .cm-box .cm-item p { margin: 4px 0 0; font-size: 13px; color: #555; line-height: 1.7; }
+        .sec-h { margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; }
+        .sec-h b { font-size: 15px; color: #333; }
+        .sec-h small { color: #98a0b3; font-size: 11.5px; }
+        .chart-card { background: #fff; border: 1px solid #eef1f8; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+        .chart-card h4 { margin: 0 0 6px; font-size: 13.5px; color: #555; }
+        .chart-box { width: 100%; height: 260px; }
+        .chart-empty { color: #98a0b3; font-size: 12.5px; text-align: center; padding: 30px 0; }
+    </style>
+</head>
+<body>
+<div class="query-wrap">
+    <div class="query-title">📋 登记信息查询</div>
+    <div class="query-sub" id="querySub">输入班级码、学生编号与姓名，查询该生的全部登记信息（未识别班级）</div>
+
+    <div class="panel">
+        <form id="qform" style="display:flex;flex-direction:column;gap:12px;" autocomplete="off">
+            <input type="hidden" name="c" id="fc" value="" autocomplete="off">
+            <div class="form-group" style="margin-bottom:0;">
+                <label>学生编号</label>
+                <input type="text" name="no" id="fno" class="form-control" value="" placeholder="如：2024001" required autocomplete="off">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>学生姓名</label>
+                <input type="text" name="name" id="fname" class="form-control" value="" placeholder="如：张三" required autocomplete="off">
+            </div>
+            <button type="submit" class="btn">查 询</button>
+        </form>
+    </div>
+
+    <div id="alertBox"></div>
+    <div id="resBox"></div>
+</div>
+<script src="assets/echarts.min.js"></script>
+<script src="assets/chart_common.js"></script>
+<script>
+/* ===== 全局状态（原 query.php 头部查询逻辑的纯前端迁移；tview 教师视图已按单机版剥离） ===== */
+var TODAY = (function () { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); })();
+var BY_MAP = {'scan': '扫码', 'click': '点击', 'batch': '批量', 'page': '页面', 'api': '接口'};
+var MODE_NAMES = {'count': '单次登记', 'daily': '每日打卡', 'multi': '多次登记', 'quiz': '答题', 'raise': '举牌', 'omr': '答题卡'};
+var MODE_COLORS = {'count': '#667eea', 'daily': '#3fb896', 'multi': '#8f5fd6', 'quiz': '#e6a23c', 'raise': '#e67e22', 'omr': '#e74c3c'};
+var CUR_CLS = null;        // 已识别班级
+var LAST_Q = null;         // 最近一次查询 {no,name}
+var Q_HIST_INITED = false;
+var CHART_DATA = null;     // 图表数据缓存
+
+function $(id) { return document.getElementById(id); }
+function tsDay(str) { str = String(str || ''); return str.length >= 10 ? str.slice(0, 10) : ''; }
+function esc(str) { return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+function showAlert(html) { $('alertBox').innerHTML = html ? '<div class="alert alert-error">' + html + '</div>' : ''; }
+function setSub(name) { $('querySub').textContent = '输入班级码、学生编号与姓名，查询该生的全部登记信息（' + (name || '未识别班级') + '）'; }
+
+/** 同步 URL 参数（file:// 下 replaceState 可能受限，静默失败即可） */
+function syncUrl(no, name) {
+    var sp = new URLSearchParams();
+    if (CUR_CLS) sp.set('c', String(CUR_CLS.id));
+    if (no) sp.set('no', no);
+    if (name) sp.set('name', name);
+    try { history.replaceState(null, '', location.pathname + '?' + sp.toString()); } catch (e) {}
+}
+
+/* ===== 表单提交（原 GET form 改 JS 提交，不刷新） ===== */
+function qSubmit(ev) {
+    ev.preventDefault();
+    if (!CUR_CLS) { showAlert('请提供班级码'); return false; }
+    var no = $('fno').value.trim();
+    var name = $('fname').value.trim();
+    if (no === '' || name === '') { showAlert('未找到该学生，请核对编号和姓名'); return false; }
+    doQuery(no, name);
+    return false;
+}
+
+/* ===== 识别班级（原按 class_code 查库；本地层 c 亦支持班级 id） ===== */
+async function identifyClass(cval) {
+    cval = String(cval || '').trim();
+    if (cval === '') { showAlert('请提供班级码'); return null; }
+    var cls = null;
+    var cid = parseInt(cval, 10);
+    if (String(cid) === cval) {
+        var row = await DB.get('classes', cid);
+        if (row && !row.deleted_at) cls = row;
+    }
+    if (!cls) {
+        cls = (await DB.find('classes', function (c) { return String(c.class_code || '') === cval && !c.deleted_at; }))[0] || null;
+    }
+    if (!cls) { showAlert('班级码不存在，请核对后重试'); return null; }
+    // 班级查询总开关（本地层缺省视为开启；字段存在且为 0 才关闭）
+    var qe = parseInt(cls.query_enabled, 10);
+    if (isNaN(qe)) qe = 1;
+    if (!qe) { showAlert('🔒 未开启公开查询：该班级暂未开放线上查询功能，请联系班级教师开启。'); return null; }
+    CUR_CLS = cls;
+    $('fc').value = String(cls.id);
+    setSub(cls.name);
+    return cls;
+}
+
+/* ===== 主查询（原头部 PHP 逐段迁移） ===== */
+async function doQuery(no, name) {
+    no = String(no || '').trim();
+    name = String(name || '').trim();
+    LAST_Q = {no: no, name: name};
+    showAlert('');
+    var box = $('resBox');
+    box.innerHTML = '<div class="panel"><p style="text-align:center;color:#999;margin:8px 0;">查询中…</p></div>';
+
+    var cls = CUR_CLS;
+    if (!cls) {
+        cls = await identifyClass($('fc').value);
+        if (!cls) { box.innerHTML = ''; return; }
+    }
+
+    // 学生匹配：编号+姓名双重匹配（防凭单项信息猜测）
+    var student = null;
+    var list = await DB.by('students', 'class_id', cls.id);
+    for (var i = 0; i < list.length; i++) {
+        if (String(list[i].student_no) === no && String(list[i].name) === name) { student = list[i]; break; }
+    }
+    if (!student) {
+        box.innerHTML = '';
+        showAlert('未找到该学生，请核对编号和姓名');
+        return;
+    }
+    no = String(student.student_no || '');
+    name = String(student.name || '');
+    LAST_Q = {no: no, name: name};
+    syncUrl(no, name);
+    $('fno').value = no;
+    $('fname').value = name;
+
+    // 教师点评（项目维度）：综合报告展示
+    var cmMap = {};
+    (await DB.by('student_comments', 'student_id', student.id)).forEach(function (c) {
+        cmMap[c.project_id] = String(c.content || '');
+    });
+
+    // 项目集（allow_query 项目开关：本地层缺省视为 1）
+    var plist = (await DB.by('projects', 'class_id', cls.id)).filter(function (p) {
+        if (p.deleted_at) return false;
+        var aq = parseInt(p.allow_query, 10);
+        if (isNaN(aq)) aq = 1;
+        return aq === 1;
+    });
+
+    var pieCounts = {}, trendMap = {}, omrLines = [];
+    var projects = [];
+    for (var k = 0; k < plist.length; k++) {
+        var rec = await buildRec(plist[k], student.id, cmMap);
+        if (!rec) continue;
+        rec.evals.forEach(function (e) { pieCounts[e.eval] = (pieCounts[e.eval] || 0) + 1; });
+        rec.events.forEach(function (e) { if (e.date !== '') trendMap[e.date] = (trendMap[e.date] || 0) + 1; });
+        projects.push(rec);
+    }
+    // 项目卡：本日有更新的在前，其余按最近活动时间倒序
+    projects.sort(function (a, b) {
+        if (a.today !== b.today) return a.today ? -1 : 1;
+        var ta = a.base ? String(a.base.registered_at || '') : '';
+        var tb = b.base ? String(b.base.registered_at || '') : '';
+        return ta < tb ? 1 : (ta > tb ? -1 : 0);
+    });
+
+    // 答题卡得分率折线（每项目一条线，x=第N题）
+    projects.forEach(function (p) {
+        if (p.mode !== 'omr' || !p.round_nos.length) return;
+        var rates = [], has = false;
+        p.round_nos.forEach(function (rno) {
+            var o = p.omr[rno];
+            if (o && o.t > 0) { rates.push(Math.round(o.g / o.t * 1000) / 10); has = true; }
+            else rates.push(null);
+        });
+        if (has) omrLines.push({name: p.name, data: rates, rounds: p.round_nos});
+    });
+
+    renderResult(box, cls, student, projects, pieCounts, trendMap, omrLines);
+}
+
+/* ===== 组装单个项目数据（原 foreach ($plist) 段） ===== */
+async function buildRec(p, sid, cmMap) {
+    var pid = p.id, mode = String(p.mode || 'count');
+    var rec = {
+        id: pid, name: p.name, mode: mode,
+        base: null, days: [], rounds: {}, round_nos: [], round_titles: {}, correct: {},
+        omr: {}, omr_key: {}, omr_kind: {}, omr_q_list: [],
+        evals: [], events: [], cnt: 0, today: false,
+        comment: String(cmMap[pid] || '')
+    };
+
+    // 基表记录（可能 registered=0 但留有历史评价）
+    var baseRows = await DB.by('records', 'project_id', pid);
+    for (var i = 0; i < baseRows.length; i++) {
+        if (baseRows[i].student_id === sid) { rec.base = baseRows[i]; break; }
+    }
+
+    if (mode === 'daily') {
+        // 打卡项目：record_days 每天一条（含当日评价）
+        var days = (await DB.by('record_days', 'project_id', pid)).filter(function (d) { return d.student_id === sid; });
+        days.sort(function (a, b) { return String(a.reg_date) < String(b.reg_date) ? 1 : (String(a.reg_date) > String(b.reg_date) ? -1 : 0); });
+        days.forEach(function (d) {
+            var ev = String(d.eval_value || '');
+            var dd = String(d.reg_date || '');
+            rec.days.push({reg_date: dd, eval_value: ev, eval_at: String(d.eval_at || '')});
+            rec.events.push({date: dd, kind: '打卡', round: null, eval: ev, eval_at: String(d.eval_at || ''), by: ''});
+            if (ev !== '') rec.evals.push({label: dd, eval: ev});
+            if (dd === TODAY) rec.today = true;
+        });
+        rec.cnt = rec.days.length;
+    } else {
+        // 按次/答题/举牌/答题卡：record_rounds 每次/每题次一条
+        var rrs = (await DB.by('record_rounds', 'project_id', pid)).filter(function (r) { return r.student_id === sid; });
+        rrs.sort(function (a, b) { return a.round_no - b.round_no; });
+        rrs.forEach(function (r) {
+            var rno = parseInt(r.round_no, 10) || 0;
+            var d = tsDay(r.registered_at);
+            var ev = String(r.eval_value || '');
+            rec.rounds[rno] = {round_no: rno, registered_at: String(r.registered_at || ''), registered_by: String(r.registered_by || ''), eval_value: ev, eval_at: String(r.eval_at || '')};
+            rec.events.push({date: d, kind: '登记', round: rno, eval: ev, eval_at: String(r.eval_at || ''), by: String(r.registered_by || '')});
+            if (ev !== '') rec.evals.push({label: '第' + rno + '次', eval: ev});
+            if (d === TODAY) rec.today = true;
+        });
+        // 轮次定义（只读，不建轮次）
+        var prs = (await DB.by('project_rounds', 'project_id', pid));
+        prs.sort(function (a, b) { return a.round_no - b.round_no; });
+        prs.forEach(function (r) {
+            var rno = parseInt(r.round_no, 10) || 0;
+            rec.round_nos.push(rno);
+            if (String(r.title || '') !== '') rec.round_titles[rno] = String(r.title);
+            var co = String(r.correct_opts || '').toUpperCase().replace(/[^A-E]/g, '');
+            if (co !== '') rec.correct[rno] = co;
+        });
+        if (mode === 'omr') {
+            // 答题卡：每题次识别结果（answers JSON + score "g/t"）
+            var ors = (await DB.by('omr_results', 'project_id', pid)).filter(function (o) { return o.student_id === sid; });
+            for (var oi = 0; oi < ors.length; oi++) {
+                var orow = ors[oi];
+                var rno2 = parseInt(orow.round_no, 10) || 0;
+                var ans = null;
+                try { ans = JSON.parse(String(orow.answers || '[]')); } catch (e) { ans = []; }
+                var g = 0, t = 0;
+                var parts = String(orow.score || '').split('/');
+                if (parts.length === 2 && parseFloat(parts[1]) > 0) { g = parseFloat(parts[0]); t = parseFloat(parts[1]); }
+                rec.omr[rno2] = {answers: (ans && typeof ans === 'object') ? ans : {}, g: g, t: t};
+                if (!rec.rounds[rno2]) rec.rounds[rno2] = {round_no: rno2, registered_at: '', registered_by: 'scan', eval_value: '', eval_at: ''};
+                rec.events.push({date: '', kind: '批改', round: rno2, eval: t > 0 ? (g + '/' + t) : '', eval_at: '', by: 'scan'});
+            }
+            // 答案键：绑定模板题组 + omr_answers 独立录入补未设题
+            var bindTid = parseInt(await DB.settingsGet('omr_tpl_bind_' + pid, '0'), 10) || 0;
+            if (bindTid > 0) {
+                var trow = await DB.get('omr_templates', bindTid);
+                if (trow && parseInt(trow.project_id, 10) === pid) {
+                    var lay = null;
+                    try { lay = JSON.parse(String(trow.layout || '{}')); } catch (e) { lay = null; }
+                    var secs = (lay && lay.sections && lay.sections.length) ? lay.sections : [];
+                    secs.forEach(function (sec) {
+                        if (!sec || typeof sec !== 'object') return;
+                        var kind = String(sec.kind || 'single');
+                        if (kind === 'blank' || kind === 'short') return;
+                        var start = parseInt(sec.start, 10) || 1;
+                        var cnt2 = Math.min(500, Math.max(1, parseInt(sec.count, 10) || 0));
+                        var key = (sec.key && typeof sec.key === 'object') ? sec.key : {};
+                        for (var q = start; q < start + cnt2; q++) {
+                            var qk = String(q);
+                            rec.omr_kind[qk] = (kind === 'multi') ? 'multi' : 'single';
+                            var v = String(key[qk] === undefined ? '' : key[qk]).toUpperCase().replace(/[^A-E]/g, '');
+                            if (v !== '') rec.omr_key[qk] = v;
+                        }
+                    });
+                }
+            }
+            var arow = await DB.first('omr_answers', 'project_id', pid);
+            if (arow) {
+                var savedTid = String(await DB.settingsGet('omr_answers_tid_' + pid, ''));
+                if (savedTid === '' || (parseInt(savedTid, 10) || 0) === bindTid) {
+                    var dec = null;
+                    try { dec = JSON.parse(String(arow.answers || '{}')); } catch (e) { dec = null; }
+                    if (dec && typeof dec === 'object') {
+                        Object.keys(dec).forEach(function (q) {
+                            var qk = String(q).replace(/[^0-9]/g, '');
+                            var vv = String(dec[q]).toUpperCase().replace(/[^A-E]/g, '');
+                            if (qk !== '' && vv !== '' && !rec.omr_key[qk]) rec.omr_key[qk] = vv;
+                        });
+                    }
+                }
+            }
+            var qlist = Object.keys(rec.omr_key);
+            Object.keys(rec.omr).forEach(function (rno3) {
+                Object.keys(rec.omr[rno3].answers).forEach(function (q) {
+                    var qk = String(q).replace(/[^0-9]/g, '');
+                    if (qk !== '' && qlist.indexOf(qk) < 0) qlist.push(qk);
+                });
+            });
+            qlist.sort(function (a, b) { return (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0); });
+            rec.omr_q_list = qlist;
+        }
+        rec.cnt = Object.keys(rec.rounds).length;
+        if (!rec.cnt && rec.base) {
+            // 无按次记录：base 记录即一次事件
+            var bd = tsDay(rec.base.registered_at);
+            var bev = String(rec.base.eval_value || '');
+            rec.events.push({date: bd, kind: '登记', round: null, eval: bev, eval_at: String(rec.base.eval_at || ''), by: String(rec.base.registered_by || '')});
+            if (bev !== '') rec.evals.push({label: bd, eval: bev});
+            if (bd === TODAY) rec.today = true;
+            rec.cnt = 1;
+        }
+    }
+
+    // 活动判定：基表已登记或有评价 / 有打卡 / 有按次 / 有答题卡识别 —— 全无则不呈现
+    var hasActivity = (!!rec.base && (parseInt(rec.base.registered, 10) === 1 || String(rec.base.eval_value || '') !== ''))
+        || rec.days.length > 0 || Object.keys(rec.rounds).length > 0 || Object.keys(rec.omr).length > 0;
+    if (!hasActivity) return null;
+
+    // 事件与评价历史最新在前
+    rec.events.sort(function (a, b) { return String(a.date) < String(b.date) ? 1 : (String(a.date) > String(b.date) ? -1 : 0); });
+    rec.evals.sort(function (a, b) { return String(a.label) < String(b.label) ? 1 : (String(a.label) > String(b.label) ? -1 : 0); });
+    return rec;
+}
+
+/* ===== 助手（原 qj_round_label / qj_num / qj_quiz_mark / qj_omr_table） ===== */
+function qjRoundLabel(rec, rno) {
+    var unit = rec.mode === 'multi' ? '次' : '题';
+    var t = String(rec.round_titles[rno] || '');
+    return '第' + rno + unit + (t !== '' ? '「' + t + '」' : '');
+}
+function qjNum(v) {
+    var s = String(parseFloat(v || 0).toFixed(1));
+    s = s.replace(/\.0$/, '');
+    return (s === '' || s === '-0') ? '0' : s;
+}
+function qjQuizMark(rec, rno, ev) {
+    ev = String(ev || '');
+    if (ev === '') return '<span style="color:#98a0b3;">未答</span>';
+    var key = String(rec.correct[rno] || '');
+    var good = key !== '' && key.indexOf(ev) >= 0;
+    var color = good ? '#27ae60' : (key !== '' ? '#e74c3c' : '#667eea');
+    var mark = key !== '' ? (good ? ' ✓' : ' ✗') : '';
+    return '<b style="color:' + color + ';">' + esc(ev) + mark + '</b>' +
+        (key !== '' ? ' <span style="color:#98a0b3;font-size:11px;">（正确 ' + esc(key) + '）</span>' : '');
+}
+function qjOmrTable(rec, o) {
+    var html = '<table class="qa-tb"><tr><th>题号</th><th>我的答案</th><th>正确答案</th><th>判定</th></tr>';
+    var shown = 0;
+    rec.omr_q_list.forEach(function (q) {
+        var qk = String(q);
+        var sel = String(o.answers[qk] !== undefined ? o.answers[qk] : (o.answers[parseInt(qk, 10)] || '')).toUpperCase().replace(/[^A-E]/g, '');
+        var key = String(rec.omr_key[qk] || '');
+        if (sel === '' && key === '') return;
+        var kind = String(rec.omr_kind[qk] || 'single');
+        var good = false;
+        if (key !== '' && sel !== '') {
+            good = (kind === 'multi') ? sel.split('').every(function (c) { return key.indexOf(c) >= 0; }) && sel.split('').length === key.split('').length
+                                      : sel === key;
+        }
+        html += '<tr><td>' + esc(qk) + '</td><td>' + (sel !== '' ? '<b>' + esc(sel) + '</b>' : '<span style="color:#98a0b3;">未涂</span>') +
+                '</td><td>' + (key !== '' ? esc(key) : '—') + '</td><td>' +
+                (key === '' ? '—' : (good ? '<span class="okc">✓</span>' : '<span class="ngc">✗</span>')) + '</td></tr>';
+        shown++;
+    });
+    if (!shown) return '<div class="pc-line" style="color:#98a0b3;">该题次暂无作答明细</div>';
+    return html + '</table>';
+}
+
+/* ===== 项目折叠卡（本日/历史两 tab 共用；todayOnly=true 时只呈现本日相关内容） ===== */
+function cardHtml(rec, todayOnly, tab) {
+    var mode = rec.mode;
+    var cid = 'pc_' + tab + '_' + rec.id;
+    var isOmr = mode === 'omr';
+    var roundsKeys = Object.keys(rec.rounds).map(Number);
+
+    // —— 标题 mini 摘要 ——
+    var mini = '';
+    var last = rec.evals.length ? rec.evals[0] : null;
+    if (mode === 'daily') {
+        var hasToday = rec.days.some(function (d) { return d.reg_date === TODAY; });
+        mini = '打卡 ' + rec.days.length + ' 天' + (hasToday ? ' · 本日已打卡' : ' · 本日未打卡');
+    } else if (isOmr) {
+        var g = 0, t = 0;
+        Object.keys(rec.omr).forEach(function (k) { g += rec.omr[k].g; t += rec.omr[k].t; });
+        mini = '已批改 ' + Object.keys(rec.omr).length + ' 题' + (t > 0 ? ' · 总得分率 ' + Math.round(g / t * 1000) / 10 + '%' : '');
+    } else if (mode === 'quiz' || mode === 'raise') {
+        var ans = 0, ok = 0;
+        roundsKeys.forEach(function (rno) {
+            var ev = String(rec.rounds[rno].eval_value || '');
+            if (ev === '' || !rec.correct[rno]) return;
+            ans++;
+            if (rec.correct[rno].indexOf(ev) >= 0) ok++;
+        });
+        mini = '答题 ' + roundsKeys.length + ' 题' + (ans > 0 ? ' · 答对 ' + ok + ' 题（正确率 ' + Math.round(ok / ans * 100) + '%）' : '');
+    } else if (mode === 'multi') {
+        var totalR = Math.max(rec.round_nos.length, roundsKeys.length);
+        mini = '已登记 ' + roundsKeys.length + '/' + totalR + ' 次';
+    } else {
+        mini = (rec.base && parseInt(rec.base.registered, 10) === 1) ? '已登记' : '未登记';
+    }
+    if (last) mini += ' · 最新评价 ' + last.eval;
+
+    var h = '<div class="pcard" id="' + cid + '">' +
+        '<div class="pc-head" onclick="tgPc(\'' + cid + '\')">' +
+        '<span class="pc-arrow">▸</span>' +
+        '<span class="pc-name">' + esc(rec.name) + '</span>' +
+        '<span class="pc-mode" style="color:' + (MODE_COLORS[mode] || '#667eea') + ';background:' + (MODE_COLORS[mode] || '#667eea') + '1a;">' + (MODE_NAMES[mode] || mode) + '</span>' +
+        (rec.today ? '<span class="pc-new">有更新</span>' : '') +
+        '<span class="pc-mini">' + esc(mini) + '</span></div>' +
+        '<div class="pc-body">';
+    h += cardBodyHtml(rec, todayOnly, cid, isOmr, roundsKeys);
+    // —— 评价历史 chips（历史视图） ——
+    if (!todayOnly && rec.evals.length > 0) {
+        h += '<div class="pc-chips" style="margin-top:6px;"><span style="font-size:12px;color:#98a0b3;">评价历史（' + rec.evals.length + ' 次）：</span>';
+        rec.evals.slice(0, 20).forEach(function (eh) {
+            h += '<span class="chip ev" style="white-space:nowrap;">' + esc(eh.label + ' ' + eh.eval) + '</span>';
+        });
+        h += '</div>';
+    }
+    // —— 流水明细 ——
+    if (!todayOnly && rec.events.length) {
+        var fid = 'flow_' + tab + '_' + rec.id;
+        h += '<button type="button" class="flowbtn" onclick="tgFlow(\'' + fid + '\', this, ' + rec.events.length + ')">📄 流水明细（' + rec.events.length + ' 条）</button>';
+        h += '<div class="pc-flow" id="' + fid + '">';
+        rec.events.forEach(function (e) {
+            h += '<div><span class="ft">' + esc(e.date !== '' ? e.date : '—') + '</span><b>' + esc(e.kind) + '</b>' +
+                (e.round !== null ? '（' + esc(qjRoundLabel(rec, parseInt(e.round, 10))) + '）' : '') +
+                (e.by !== '' && BY_MAP[e.by] ? ' · ' + BY_MAP[e.by] : '') +
+                (e.eval !== '' ? ' · <b style="color:#e67e22;">' + esc(e.eval) + '</b>' + (e.eval_at !== '' ? ' <span class="ft">' + esc(e.eval_at) + '</span>' : '') : '') +
+                '</div>';
+        });
+        h += '</div>';
+    }
+    // —— 教师点评（历史视图卡片底部展示） ——
+    if (!todayOnly && rec.comment !== '') {
+        h += '<div class="pc-cm">💬 教师点评：' + esc(rec.comment) + '</div>';
+    }
+    h += '</div></div>';
+    return h;
+}
+
+function cardBodyHtml(rec, todayOnly, cid, isOmr, roundsKeys) {
+    var mode = rec.mode;
+    var h = '';
+    if (mode === 'daily') {
+        var todayRow = null;
+        rec.days.forEach(function (d) { if (d.reg_date === TODAY && !todayRow) todayRow = d; });
+        if (todayOnly) {
+            if (todayRow) {
+                h += '<div class="pc-line">本日（' + esc(TODAY) + '）已打卡' + (todayRow.eval_value !== '' ? ' · 评价：<b style="color:#e67e22;">' + esc(todayRow.eval_value) + '</b>' : '') + '</div>';
+            } else {
+                h += '<div class="pc-line" style="color:#98a0b3;">本日暂无打卡记录</div>';
+            }
+        } else {
+            h += '<div class="pc-line"><b style="color:#3fb896;">累计打卡 ' + rec.days.length + ' 天</b></div>';
+            if (rec.days.length) {
+                h += '<div class="pc-chips">';
+                rec.days.slice(0, 30).forEach(function (d) {
+                    h += '<span class="chip' + (d.eval_value !== '' ? ' ev' : '') + '" title="' + esc(d.eval_value) + '">' + esc(String(d.reg_date).slice(5)) + '</span>';
+                });
+                if (rec.days.length > 30) h += '<span class="chip" style="color:#98a0b3;">…共' + rec.days.length + '天</span>';
+                h += '</div>';
+                var evd = rec.days.filter(function (d) { return d.eval_value !== ''; });
+                if (evd.length) {
+                    h += '<table class="qa-tb"><tr><th>日期</th><th>评价内容</th></tr>';
+                    evd.forEach(function (d) {
+                        h += '<tr><td>' + esc(d.reg_date) + '</td><td class="evc">' + esc(d.eval_value) + '</td></tr>';
+                    });
+                    h += '</table>';
+                }
+            }
+        }
+    } else if (isOmr) {
+        if (todayOnly) {
+            var todays = [];
+            roundsKeys.forEach(function (rno) {
+                var at = String(rec.rounds[rno].registered_at || '');
+                if (at !== '' && tsDay(at) === TODAY) todays.push(rno);
+            });
+            if (todays.length) {
+                h += '<div class="pc-line">本日新增批改 ' + todays.length + ' 题：</div>';
+                todays.forEach(function (rno) {
+                    var o = rec.omr[rno];
+                    h += '<div class="pc-line">· ' + esc(qjRoundLabel(rec, rno)) + (o && o.t > 0 ? '：得分 <b style="color:#e74c3c;">' + esc(qjNum(o.g)) + '/' + esc(qjNum(o.t)) + '</b>' : '：已识别待批改') + '</div>';
+                });
+            } else {
+                h += '<div class="pc-line" style="color:#98a0b3;">本日暂无新的答题卡记录</div>';
+            }
+        } else {
+            var g2 = 0, t2 = 0;
+            Object.keys(rec.omr).forEach(function (k) { g2 += rec.omr[k].g; t2 += rec.omr[k].t; });
+            h += '<div class="pc-line"><b style="color:#e74c3c;">累计 ' + Object.keys(rec.omr).length + ' 题次</b>' +
+                (t2 > 0 ? ' · 总得分 ' + esc(qjNum(g2)) + '/' + esc(qjNum(t2)) + '（得分率 ' + Math.round(g2 / t2 * 1000) / 10 + '%）' : '') + '</div>';
+            rec.round_nos.forEach(function (rno) {
+                if (!rec.rounds[rno] && !rec.omr[rno]) return;
+                var o = rec.omr[rno] || null;
+                var sub = cid + '_r' + rno;
+                var st = rec.rounds[rno] ? String(rec.rounds[rno].registered_at || '') : '';
+                h += '<div class="sub"><div class="sub-h" onclick="tgSub(\'' + sub + '\', this)"><span class="pc-arrow">▸</span>' + esc(qjRoundLabel(rec, rno));
+                if (o && o.t > 0) {
+                    h += ' · 得分 <b style="color:#e74c3c;">' + esc(qjNum(o.g)) + '/' + esc(qjNum(o.t)) + '</b>（' + Math.round(o.g / o.t * 1000) / 10 + '%）';
+                } else if (o) {
+                    h += ' · <span style="color:#98a0b3;">待批改</span>';
+                }
+                if (st !== '') h += ' <span class="sub-t">' + esc(st) + '</span>';
+                h += '</div><div class="sub-b" id="' + sub + '">';
+                h += o ? qjOmrTable(rec, o) : '<div class="pc-line" style="color:#98a0b3;">暂无识别结果</div>';
+                h += '</div></div>';
+            });
+        }
+    } else if (mode === 'quiz' || mode === 'raise') {
+        var ans2 = 0, ok2 = 0;
+        roundsKeys.forEach(function (rno) {
+            var ev = String(rec.rounds[rno].eval_value || '');
+            if (ev === '' || !rec.correct[rno]) return;
+            ans2++;
+            if (rec.correct[rno].indexOf(ev) >= 0) ok2++;
+        });
+        if (todayOnly) {
+            var todays2 = [];
+            roundsKeys.forEach(function (rno) {
+                var at = String(rec.rounds[rno].registered_at || '');
+                if (at !== '' && tsDay(at) === TODAY) todays2.push(rno);
+            });
+            if (todays2.length) {
+                h += '<div class="pc-line">本日答题 ' + todays2.length + ' 题：</div>';
+                todays2.forEach(function (rno) {
+                    h += '<div class="pc-line">· ' + esc(qjRoundLabel(rec, rno)) + '：' + qjQuizMark(rec, rno, rec.rounds[rno].eval_value) + '</div>';
+                });
+            } else {
+                h += '<div class="pc-line" style="color:#98a0b3;">本日暂无答题记录</div>';
+            }
+        } else {
+            h += '<div class="pc-line"><b style="color:#e6a23c;">累计答题 ' + roundsKeys.length + ' 题</b>' +
+                (ans2 > 0 ? ' · 答对 ' + ok2 + ' 题 · 正确率 <b style="color:#27ae60;">' + Math.round(ok2 / ans2 * 100) + '%</b>' : '') + '</div>';
+            rec.round_nos.forEach(function (rno) {
+                if (!rec.rounds[rno]) return;
+                var r2 = rec.rounds[rno];
+                var sub2 = cid + '_r' + rno;
+                h += '<div class="sub"><div class="sub-h" onclick="tgSub(\'' + sub2 + '\', this)"><span class="pc-arrow">▸</span>' + esc(qjRoundLabel(rec, rno)) + '：' + qjQuizMark(rec, rno, r2.eval_value);
+                if (String(r2.registered_at || '') !== '') h += ' <span class="sub-t">' + esc(r2.registered_at) + '</span>';
+                h += '</div><div class="sub-b" id="' + sub2 + '"><div class="pc-line">作答时间：' + esc(r2.registered_at || '—') + '（' + (BY_MAP[r2.registered_by] || '—') + '）</div></div></div>';
+            });
+        }
+    } else if (mode === 'multi') {
+        if (todayOnly) {
+            var todays3 = [];
+            roundsKeys.forEach(function (rno) {
+                var at = String(rec.rounds[rno].registered_at || '');
+                if (at !== '' && tsDay(at) === TODAY) todays3.push(rno);
+            });
+            if (todays3.length) {
+                h += '<div class="pc-line">本日登记 ' + todays3.length + ' 次：</div>';
+                todays3.forEach(function (rno) {
+                    var r2 = rec.rounds[rno];
+                    h += '<div class="pc-line">· ' + esc(qjRoundLabel(rec, rno)) + '：' + esc(r2.registered_at || '') +
+                        (r2.eval_value !== '' ? ' · 评价 <b style="color:#e67e22;">' + esc(r2.eval_value) + '</b>' : '') + '</div>';
+                });
+            } else {
+                h += '<div class="pc-line" style="color:#98a0b3;">本日暂无登记记录</div>';
+            }
+        } else {
+            var totalR2 = Math.max(rec.round_nos.length, roundsKeys.length);
+            h += '<div class="pc-line"><b style="color:#8f5fd6;">已登记 ' + roundsKeys.length + '/' + totalR2 + ' 次</b></div>';
+            var rlist = rec.round_nos.length ? rec.round_nos : roundsKeys;
+            rlist.forEach(function (rno) {
+                var r2 = rec.rounds[rno] || null;
+                var sub3 = cid + '_r' + rno;
+                h += '<div class="sub"><div class="sub-h' + (r2 ? '' : ' dim') + '" onclick="tgSub(\'' + sub3 + '\', this)"><span class="pc-arrow">▸</span>' + esc(qjRoundLabel(rec, rno)) + '：';
+                if (r2) {
+                    h += (String(r2.registered_at || '') !== '' ? '✓ ' + esc(r2.registered_at) : '未登记') +
+                        (r2.eval_value !== '' ? ' · <span class="evc">' + esc(r2.eval_value) + '</span>' : '');
+                } else {
+                    h += '<span style="color:#98a0b3;">未登记</span>';
+                }
+                h += '</div><div class="sub-b" id="' + sub3 + '">';
+                if (r2) {
+                    h += '<div class="pc-line">登记时间：' + esc(r2.registered_at || '—') + '（' + (BY_MAP[r2.registered_by] || '—') + '）' +
+                        (r2.eval_value !== '' ? ' · 评价：<b style="color:#e67e22;">' + esc(r2.eval_value) + '</b>' + (r2.eval_at !== '' ? ' <span class="sub-t">' + esc(r2.eval_at) + '</span>' : '') : '') + '</div>';
+                } else {
+                    h += '<div class="pc-line" style="color:#98a0b3;">该次暂无登记记录</div>';
+                }
+                h += '</div></div>';
+            });
+        }
+    } else {
+        // 单次登记
+        var b = rec.base || {registered: 0, registered_at: '', registered_by: '', eval_value: '', eval_at: ''};
+        if (todayOnly) {
+            var regToday = String(b.registered_at || '') !== '' && tsDay(b.registered_at) === TODAY;
+            var evToday = String(b.eval_at || '') !== '' && tsDay(b.eval_at) === TODAY;
+            if (regToday || evToday) {
+                if (regToday) h += '<div class="pc-line">本日登记：✓ ' + esc(b.registered_at) + '</div>';
+                if (evToday) h += '<div class="pc-line">本日评价：<b style="color:#e67e22;">' + esc(b.eval_value) + '</b></div>';
+            } else {
+                h += '<div class="pc-line" style="color:#98a0b3;">本日暂无登记/评价记录</div>';
+            }
+        } else {
+            h += '<div class="pc-line">登记状态：<b style="color:' + (parseInt(b.registered, 10) === 1 ? '#27ae60">已登记' : '#98a0b3">未登记') + '</b>' +
+                (String(b.registered_at || '') !== '' ? ' · ' + esc(b.registered_at) + '（' + (BY_MAP[b.registered_by] || '—') + '）' : '') + '</div>';
+            if (String(b.eval_value || '') !== '') {
+                h += '<div class="pc-line">当前评价：<b style="color:#e67e22;">' + esc(b.eval_value) + '</b>' +
+                    (String(b.eval_at || '') !== '' ? ' <span class="sub-t">' + esc(b.eval_at) + '</span>' : '') + '</div>';
+            }
+        }
+    }
+    return h;
+}
+
+/* ===== 结果渲染（信息条 + 汇总卡 + 三选项卡） ===== */
+function renderResult(box, cls, student, projects, pieCounts, trendMap, omrLines) {
+    // 汇总指标
+    var totalCnt = 0, totalEvals = 0, todayCnt = 0, hasComment = false;
+    projects.forEach(function (p) {
+        totalCnt += p.cnt;
+        totalEvals += p.evals.length;
+        if (p.today) todayCnt++;
+        if (p.comment !== '') hasComment = true;
+    });
+
+    var cardsToday = '', cardsHist = '';
+    projects.forEach(function (rec) { cardsHist += cardHtml(rec, false, 'h'); });
+    projects.forEach(function (rec) { if (rec.today) cardsToday += cardHtml(rec, true, 't'); });
+
+    // 矩阵行
+    var mxMap = {}, mxRows = [];
+    projects.forEach(function (p) {
+        var pid = p.id;
+        if (p.mode === 'daily') {
+            p.days.forEach(function (d) {
+                var k = 'd:' + d.reg_date;
+                if (!mxMap[k]) { mxMap[k] = {key: k, date: d.reg_date, sub: '', rno: 0, cells: {}, evals: {}}; mxRows.push(mxMap[k]); }
+                var ev = String(d.eval_value || '');
+                mxMap[k].cells[pid] = ev !== '' ? ev : '✓';
+                if (ev !== '') mxMap[k].evals[pid] = ev;
+            });
+        } else if (Object.keys(p.rounds).length) {
+            var isOmr = p.mode === 'omr';
+            var roundLabel = (p.mode === 'multi') ? '次' : '题';
+            Object.keys(p.rounds).forEach(function (rk) {
+                var rno = parseInt(rk, 10);
+                var r2 = p.rounds[rk];
+                var k = 'r:' + rno;
+                if (!mxMap[k]) { mxMap[k] = {key: k, date: '', sub: '第' + rno + roundLabel, rno: rno, cells: {}, evals: {}}; mxRows.push(mxMap[k]); }
+                var d = tsDay(r2.registered_at);
+                if (d !== '' && d > mxMap[k].date) mxMap[k].date = d;
+                var cell = '✓';
+                if (isOmr && p.omr[rno] && p.omr[rno].t > 0) {
+                    cell = qjNum(p.omr[rno].g) + '/' + qjNum(p.omr[rno].t);
+                } else if (String(r2.eval_value || '') !== '') {
+                    cell = String(r2.eval_value);
+                }
+                mxMap[k].cells[pid] = cell;
+                if (cell !== '✓') mxMap[k].evals[pid] = cell;
+            });
+        } else if (p.base) {
+            var bd = tsDay(p.base.registered_at);
+            var k2 = 'b:' + pid;
+            if (!mxMap[k2]) { mxMap[k2] = {key: k2, date: bd, sub: '登记', rno: 0, cells: {}, evals: {}}; mxRows.push(mxMap[k2]); }
+            var bev = String(p.base.eval_value || '');
+            mxMap[k2].cells[pid] = bev !== '' ? bev : '✓';
+            if (bev !== '') mxMap[k2].evals[pid] = bev;
+        }
+    });
+    // 行排序：日期倒序 → 次号倒序 → key
+    mxRows.sort(function (a, b) {
+        var c = a.date < b.date ? 1 : (a.date > b.date ? -1 : 0);
+        if (c !== 0) return c;
+        if (a.rno !== b.rno) return b.rno - a.rno;
+        return a.key < b.key ? -1 : (a.key > b.key ? 1 : 0);
+    });
+
+    // 图表数据
+    var barLabels = [], barValues = [];
+    projects.forEach(function (p) { barLabels.push(p.name); barValues.push(p.cnt); });
+    var trendLabels = [], trendValues = [];
+    for (var i = 29; i >= 0; i--) {
+        var d = new Date();
+        d.setDate(d.getDate() - i);
+        var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        trendLabels.push(ds.slice(5));
+        trendValues.push(trendMap[ds] || 0);
+    }
+    var pieItems = Object.keys(pieCounts).map(function (k) { return {name: k, value: pieCounts[k]}; });
+
+    // —— 信息条 ——
+    var h = '<div class="panel"><b>' + esc(student.name) + '</b>' +
+        '<span class="form-hint">　' + esc(cls.name) + ' · 序号 ' + esc(student.seat_no == null ? '' : student.seat_no) + ' · 编号 ' + esc(student.student_no) + '</span></div>';
+
+    if (!projects.length) {
+        h += '<div class="alert alert-info">该学生暂无公开可查询的登记信息</div>';
+        box.innerHTML = h;
+        return;
+    }
+
+    // —— 汇总卡 ——
+    h += '<div class="qsum">' +
+        '<div class="qs"><b>' + projects.length + '</b><span>登记项目数</span></div>' +
+        '<div class="qs"><b>' + todayCnt + '</b><span>本日有记录项目</span></div>' +
+        '<div class="qs"><b>' + totalCnt + '</b><span>打卡/登记次数</span></div>' +
+        '<div class="qs"><b>' + totalEvals + '</b><span>评价次数</span></div>' +
+        '</div>';
+
+    // —— 三个选项卡 ——
+    h += '<div class="qtabs">' +
+        '<button type="button" class="qt active" data-tab="today" onclick="qTab(\'today\')">☀ 本日情况</button>' +
+        '<button type="button" class="qt" data-tab="hist" onclick="qTab(\'hist\')">🗓 历史情况</button>' +
+        '<button type="button" class="qt" data-tab="report" onclick="qTab(\'report\')">📊 综合报告</button>' +
+        '</div>';
+
+    // 本日情况
+    h += '<div class="qtab-body" id="tab_today">';
+    if (cardsToday === '') {
+        h += '<div class="chart-empty" style="padding:26px 0;">本日（' + esc(TODAY) + '）暂无登记记录</div>';
+    } else {
+        h += '<div class="sec-h" style="margin-top:4px;"><b>本日登记概况</b><small>' + esc(TODAY) + ' · 共 ' + todayCnt + ' 个项目有更新</small></div>' + cardsToday;
+    }
+    h += '</div>';
+
+    // 历史情况
+    h += '<div class="qtab-body" id="tab_hist" style="display:none;">';
+    if (mxRows.length) {
+        h += '<div class="sec-h" style="margin-top:4px;"><b>📊 统计矩阵</b><small>行=每次（打卡项目按日期），列=项目；橙=评价/得分，绿✓=已登记未评价</small></div>';
+        h += '<div style="border:1px solid #eef1f8;border-radius:10px;padding:10px;"><div class="mx-wrap"><table class="mx-table"><tr><th style="min-width:96px;">每次</th>';
+        projects.forEach(function (p) { h += '<th>' + esc(p.name) + '</th>'; });
+        h += '<th>评价内容</th></tr>';
+        mxRows.forEach(function (row) {
+            h += '<tr><td class="mx-date">' + (row.date !== '' ? esc(row.date) : '<span style="color:#d5d8e2;">—</span>') +
+                (row.sub !== '' ? '<small>' + esc(row.sub) + '</small>' : '') + '</td>';
+            projects.forEach(function (p) {
+                var cell = row.cells[p.id];
+                if (cell === undefined) h += '<td><span style="color:#d5d8e2;">—</span></td>';
+                else if (cell === '✓') h += '<td><span class="mx-ok">✓</span></td>';
+                else h += '<td><span class="mx-eval">' + esc(cell) + '</span></td>';
+            });
+            h += '<td class="mx-ecol">';
+            var parts = [];
+            projects.forEach(function (p) {
+                if (row.evals[p.id] !== undefined) parts.push(esc(p.name) + '：' + esc(row.evals[p.id]));
+            });
+            h += parts.length ? parts.join('；') : '<span style="color:#d5d8e2;">—</span>';
+            h += '</td></tr>';
+        });
+        h += '</table></div></div>';
+    }
+    h += '<div class="sec-h"><b>📈 统计图表</b><small>次数 / 评价分布 / 趋势</small></div>' +
+        '<div class="chart-card"><h4>各项目登记/打卡次数</h4><div id="qbar" class="chart-box"></div></div>' +
+        '<div class="chart-card"><h4>评价分布（全部项目累计）</h4>' +
+        (pieItems.length ? '<div id="qpie" class="chart-box"></div>' : '<div class="chart-empty">暂无评价记录</div>') + '</div>' +
+        '<div class="chart-card"><h4>近 30 天登记趋势</h4><div id="qline" class="chart-box"></div></div>';
+    if (omrLines.length) {
+        h += '<div class="chart-card"><h4>答题卡得分率走势</h4><div id="qomr" class="chart-box"></div></div>';
+    }
+    h += '<div class="sec-h"><b>📚 各项目明细</b><small>点击展开 · 多项次项目可逐次展开</small></div>' + cardsHist;
+    h += '</div>';
+
+    // 综合报告
+    h += '<div class="qtab-body" id="tab_report" style="display:none;">';
+    h += '<div class="sec-h" style="margin-top:4px;"><b>📋 个人总评价汇总</b><small>全部项目最新评价与次数一览</small></div>';
+    h += '<div style="overflow-x:auto;"><table class="rp-tb"><tr><th>项目</th><th>类型</th><th>次数</th><th>评价次数</th><th>最新评价</th></tr>';
+    projects.forEach(function (p) {
+        var lv = p.evals.length ? p.evals[0] : null;
+        h += '<tr><td><b class="rpn">' + esc(p.name) + '</b></td>' +
+            '<td style="color:' + (MODE_COLORS[p.mode] || '#667eea') + ';font-weight:bold;">' + (MODE_NAMES[p.mode] || p.mode) + '</td>' +
+            '<td>' + p.cnt + '</td><td>' + p.evals.length + '</td><td>';
+        if (lv) h += '<span class="mx-eval">' + esc(lv.eval) + '</span> <span style="color:#98a0b3;font-size:11px;">（' + esc(lv.label) + '）</span>';
+        else h += '<span style="color:#d5d8e2;">—</span>';
+        h += '</td></tr>';
+    });
+    h += '</table></div>';
+    if (hasComment) {
+        h += '<div class="cm-box"><div class="sec-h" style="margin:0 0 4px;"><b>💬 教师点评</b><small>教师针对各项目的个性化点评</small></div>';
+        projects.forEach(function (p) {
+            if (p.comment === '') return;
+            h += '<div class="cm-item"><b>' + esc(p.name) + '</b><p>' + esc(p.comment) + '</p></div>';
+        });
+        h += '</div>';
+    }
+    h += '</div>';
+
+    box.innerHTML = h;
+    CHART_DATA = {barLabels: barLabels, barValues: barValues, pieItems: pieItems,
+                  trendLabels: trendLabels, trendValues: trendValues, omrLines: omrLines};
+    Q_HIST_INITED = false;   // 重新查询后历史图表需重建
+}
+
+/* ===== 交互（选项卡 / 折叠 / 流水） ===== */
+function qTab(name) {
+    ['today', 'hist', 'report'].forEach(function (t) {
+        var el = document.getElementById('tab_' + t);
+        if (el) el.style.display = (t === name) ? '' : 'none';
+    });
+    document.querySelectorAll('.qt').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
+    if (name === 'hist' && !Q_HIST_INITED) { initQCharts(); Q_HIST_INITED = true; }
+}
+function tgPc(id) { document.getElementById(id).classList.toggle('open'); }
+function tgSub(id, head) {
+    var el = document.getElementById(id);
+    el.classList.toggle('open');
+    var ar = head.querySelector('.pc-arrow');
+    if (ar) ar.textContent = el.classList.contains('open') ? '▾' : '▸';
+}
+function tgFlow(id, btn, n) {
+    var el = document.getElementById(id);
+    var show = el.style.display !== 'block';
+    el.style.display = show ? 'block' : 'none';
+    btn.textContent = show ? '📄 收起流水' : '📄 流水明细（' + n + ' 条）';
+}
+
+/* ===== 图表（ECharts 懒初始化：隐藏容器拿不到尺寸，须先显示再渲染） ===== */
+function initQCharts() {
+    var cd = CHART_DATA;
+    if (!cd || typeof echarts === 'undefined' || typeof ecSet === 'undefined') return;
+    var PAL = ['#667eea', '#3fb896', '#e6a23c', '#e74c3c', '#8f5fd6', '#5aa9e6', '#f39c9c', '#95d475'];
+    // 柱状图：各项目登记/打卡次数
+    if (cd.barLabels.length) ecSet('qbar', ecBarOpt(cd.barLabels, cd.barValues, {colors: PAL, unit: ' 次'}));
+    // 饼图：评价分布
+    if (cd.pieItems.length) {
+        var pie = cd.pieItems.map(function (it, i) { return {name: it.name, value: it.value, color: PAL[i % PAL.length]}; });
+        var total = pie.reduce(function (s, it) { return s + it.value; }, 0);
+        ecSet('qpie', ecPieOpt(pie, {unit: ' 次', centerMain: String(total), centerSub: '评价总数'}));
+    }
+    // 折线图：近30天登记趋势
+    ecSet('qline', {
+        grid: {left: 40, right: 20, top: 30, bottom: 30},
+        tooltip: {trigger: 'axis'},
+        xAxis: {type: 'category', data: cd.trendLabels, axisLabel: {color: '#888', fontSize: 11}},
+        yAxis: {type: 'value', minInterval: 1, axisLabel: {color: '#888'}, splitLine: {lineStyle: {color: '#eef1f8'}}},
+        series: [{name: '登记次数', type: 'line', data: cd.trendValues, smooth: true, symbolSize: 6, itemStyle: {color: '#667eea'},
+                  areaStyle: {opacity: 0.12, color: '#667eea'}, label: {show: false}}]
+    });
+    // 折线图：答题卡得分率走势（每项目一条线，null 断点跳过）
+    if (cd.omrLines.length) {
+        var omrLabels = cd.omrLines[0].rounds.map(function (n) { return '第' + n + '题'; });
+        var series = cd.omrLines.map(function (ln, i) {
+            return {name: ln.name, type: 'line', data: ln.data, connectNulls: true, symbolSize: 6,
+                    itemStyle: {color: PAL[i % PAL.length]}, lineStyle: {color: PAL[i % PAL.length], width: 2},
+                    label: {show: true, position: 'top', color: '#888', fontSize: 10,
+                            formatter: function (p) { return p.value == null ? '' : p.value + '%'; }}};
+        });
+        ecSet('qomr', {
+            grid: {left: 44, right: 20, top: 40, bottom: 30},
+            tooltip: {trigger: 'axis', valueFormatter: function (v) { return (v == null ? '—' : v + '%'); }},
+            legend: {top: 0, textStyle: {color: '#666', fontSize: 11}},
+            xAxis: {type: 'category', data: omrLabels, axisLabel: {color: '#888', fontSize: 11}},
+            yAxis: {type: 'value', max: 100, axisLabel: {color: '#888', formatter: '{value}%'}, splitLine: {lineStyle: {color: '#eef1f8'}}},
+            series: series
+        });
+    }
+}
+
+/* ===== 初始化 ===== */
+window.qTab = qTab; window.tgPc = tgPc; window.tgSub = tgSub; window.tgFlow = tgFlow; window.qSubmit = qSubmit;
+document.getElementById('qform').addEventListener('submit', qSubmit);
+
+(async function boot() {
+    // URL 参数：c=班级码（本地层亦支持班级 id）+ no + name
+    var c = QJ.qget('c', '');
+    var no = QJ.qget('no', '').trim();
+    var name = QJ.qget('name', '').trim();
+    if (c !== '') {
+        $('fc').value = c;
+        var cls = await identifyClass(c);
+        if (cls && no !== '' && name !== '') {
+            $('fno').value = no;
+            $('fname').value = name;
+            doQuery(no, name);
+        }
+    } else {
+        showAlert('请提供班级码');
+    }
+})();
+</script>
+</body>
+</html>

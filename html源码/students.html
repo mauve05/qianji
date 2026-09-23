@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>学生名单 - 潜记二维码作业登记系统</title>
+    <link rel="stylesheet" href="css/style.css?v=20260915">
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="favicon.ico"/>
+    <script src="js/db.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/sw_boot.js"></script>
+</head>
+<body>
+<nav class="navbar">
+        <div class="navbar-inner">
+        <a class="navbar-brand" href="index.html">潜记 · 作业登记</a>
+        <div class="navbar-menu">
+                        <select id="navClassSwitch" onchange="switchClass(this.value)" title="切换班级" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:4px;padding:2px 6px;font-size:13px;"><option value="2369" selected>五年1班</option></select>
+                                    <a href="projects.html?class_id=2369">班级情况</a>
+                        <a href="students.html?class_id=2369" class="active">学生列表</a>
+                        <a href="stats.html?class_id=2369">班级统计</a>
+        </div>
+        <!-- 移动端：汉堡按钮 → 左侧抽屉菜单 -->
+        <button type="button" class="nav-burger" onclick="toggleDrawer(true)" aria-label="打开菜单">☰</button>
+    </div>
+</nav>
+<!-- 移动端左侧抽屉菜单 -->
+<div class="drawer-mask" id="drawerMask" onclick="toggleDrawer(false)"></div>
+<aside class="side-drawer" id="sideDrawer" aria-label="导航菜单">
+    <div class="drawer-head">
+        <b>潜记 · 作业登记</b>
+        <button type="button" class="drawer-close" onclick="toggleDrawer(false)" aria-label="关闭菜单">✕</button>
+    </div>
+        <nav class="drawer-nav">
+                <a href="projects.html?class_id=2369">班级情况</a>
+                <a href="students.html?class_id=2369" class="active">学生列表</a>
+                <a href="stats.html?class_id=2369">班级统计</a>
+            </nav>
+</aside>
+<script>
+function toggleDrawer(open) {
+    var d = document.getElementById('sideDrawer');
+    var m = document.getElementById('drawerMask');
+    if (!d || !m) return;
+    d.classList.toggle('open', open);
+    m.classList.toggle('show', open);
+}
+</script>
+<!-- 移动端底部导航栏（PC 隐藏，≤768px 显示）：随上下文变化（默认：班级列表/统计报表/个人中心；班级：班级情况/学生列表/班级统计/个人中心；项目：项目情况/扫码登记/项目统计/个人中心）。加入学校/后台管理仅 PC 显示 -->
+<nav class="bottom-nav">
+        <a class="bottom-nav-item" href="projects.html?class_id=2369">
+        <span class="bottom-nav-icon">📘</span>
+        <span class="bottom-nav-text">班级情况</span>
+    </a>
+        <a class="bottom-nav-item active" href="students.html?class_id=2369">
+        <span class="bottom-nav-icon">👥</span>
+        <span class="bottom-nav-text">学生列表</span>
+    </a>
+        <a class="bottom-nav-item" href="stats.html?class_id=2369">
+        <span class="bottom-nav-icon">📊</span>
+        <span class="bottom-nav-text">班级统计</span>
+    </a>
+    </nav>
+<div class="app-content">
+<a href="projects.html?class_id=2369" style="display:inline-block;margin-bottom:15px;color:#667eea;text-decoration:none;">← 返回班级情况</a>
+
+<div class="stat-bar">
+    <div class="stat-box"><div class="num" id="stuCount">0</div><div class="label">学生总数</div></div>
+</div>
+
+<!-- 添加学生弹窗（手动添加 / EXCEL粘贴 / 扫码导入 子标签）；原顶部选项卡已改弹窗，名单为主内容常显 -->
+<div class="modal-mask" id="addModal">
+  <div class="modal" style="max-width:780px;max-height:88vh;overflow-y:auto;">
+    <h3>➕ 添加学生</h3>
+    <div class="tabs" style="margin-bottom:12px;">
+        <a href="#subtab-manual" data-subtab="manual" class="subtab-link active">手动添加</a>
+        <a href="#subtab-paste" data-subtab="paste" class="subtab-link">EXCEL粘贴导入</a>
+        <a href="#subtab-scan" data-subtab="scan" class="subtab-link">扫码导入班级码</a>
+    </div>
+
+    <!-- 手动添加 -->
+    <div class="subtab-panel" id="subtab-manual">
+        <h3>添加学生</h3>
+        <form id="manualAddForm" autocomplete="off">
+            <input type="hidden" name="action" value="add" autocomplete="off">
+            <input type="hidden" name="class_id" value="2369" autocomplete="off">
+            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                <div class="form-group" style="flex:1;min-width:120px;"><label>座号 *</label><input type="text" name="seat_no" id="add_seat" class="form-control" placeholder="自动续号：最后座号+1，可修改" inputmode="numeric" pattern="[1-9][0-9]*" title="座号必填，须为 1 开始的自然数（如 1、2、3）；座号可重复，编号唯一" required autocomplete="off"></div>
+                <div class="form-group" style="flex:1;min-width:120px;"><label>姓名 *</label><input type="text" name="name" class="form-control" placeholder="学生姓名" required autocomplete="off"></div>
+                <div class="form-group" style="flex:1;min-width:140px;"><label>编号（唯一识别码）*</label><input type="text" name="student_no" class="form-control" placeholder="如：2024001" required autocomplete="off"></div>
+                <div class="form-group" style="flex:1;min-width:120px;"><label>备注</label><input type="text" name="remark" class="form-control" placeholder="可留空" autocomplete="off"></div>
+            </div>
+            <button type="submit" class="btn">添加学生</button>
+        </form>
+    </div>
+
+    <!-- EXCEL粘贴导入 -->
+    <div class="subtab-panel" id="subtab-paste" style="display:none;">
+        <h3>EXCEL粘贴导入</h3>
+        <p class="tip" style="margin-bottom:15px;">
+            可直接复制 EXCEL 内容粘贴，一行一人<button type="button" class="hint-q" onclick="toggleHint(event, '可直接复制 EXCEL 内容区域后粘贴，对应一行一人。<br>格式说明：&quot;座号 + 姓名 + 编号 + 备注&quot;，每个元素在 EXCEL 中是一列，可用 TAB、空格或逗号隔开。<br><b>座号、姓名、编号必填</b>，座号须为 <b>1 开始的自然数</b>（如 1、2、3，可重复）；编号唯一（重复跳过）。<br>不确定格式时可先「⬇ 下载模板」，在模板中填写后整表复制粘贴进来。')">?</button>
+            <a href="#" class="btn btn-sm btn-outline" style="margin-left:10px;text-decoration:none;" onclick="return dlStuTpl(event)">⬇ 下载模板</a>
+        </p>
+        <form id="pasteImportForm" autocomplete="off">
+            <input type="hidden" name="class_id" value="2369" autocomplete="off">
+            <div class="form-group">
+                <label>粘贴区域</label>
+                <textarea name="paste_area" class="form-control" style="min-height:160px;" placeholder="请直接复制EXCEL内容区域后粘贴，对应一行一人" required></textarea>
+            </div>
+            <button type="submit" class="btn">立即导入</button>
+        </form>
+    </div>
+
+    <!-- 扫码导入 -->
+    <div class="subtab-panel" id="subtab-scan" style="display:none;">
+        <h3>扫码导入班级码</h3>
+        <p class="tip" style="margin-bottom:15px;">
+            扫码或输入提取码 / 班级码即可导入整班学生<button type="button" class="hint-q" onclick="toggleHint(event, '扫描&quot;班级导入二维码&quot;，或直接输入二维码下方的 <b>8 位提取码</b>、源班级的 <b>8 位班级码</b>（或粘贴提取链接），即可快速导入整班学生；<br>点击「导入名单」后可选择：<b>附加导入</b>（保留现有学生，编号重复跳过）或 <b>覆盖导入</b>（删除本班现有学生，用提取名单替换）。<br><b>旧格式名单（编号-姓名-备注）或缺座号的学生，将按顺序自动补充座号</b>：附加导入接续本班现有最大座号，覆盖导入从 1 开始。')">?</button>
+        </p>
+        <div id="qr-reader" style="max-width:420px;"></div>
+        <div class="form-group" style="max-width:420px;">
+            <label>或手动粘贴二维码内容 / 提取链接 / 提取码 / 班级码</label>
+            <textarea id="qr_content" class="form-control" style="min-height:80px;" placeholder="bjdl2024001-张三-1-|2024002-李四-2-|...（编号-姓名-座号-备注） 或 8位提取码/班级码（如 12345678）"></textarea>
+        </div>
+        <button type="button" class="btn" onclick="submitQrImport()">导入名单</button>
+        <form id="qrForm" autocomplete="off">
+            <input type="hidden" name="action" value="import_qr" autocomplete="off">
+            <input type="hidden" name="class_id" value="2369" autocomplete="off">
+            <input type="hidden" name="qr_content" id="qr_content_hidden" autocomplete="off">
+            <input type="hidden" name="import_mode" id="qr_mode" value="append" autocomplete="off">
+        </form>
+    </div>
+    </div>
+</div>
+
+<!-- 导入方式选择弹层（附加 / 覆盖） -->
+<div class="modal-mask" id="importModeModal">
+    <div class="modal" style="max-width:480px;">
+        <h3>选择导入方式<button type="button" class="hint-q" onclick="toggleHint(event, '<b>导入方式说明</b><br>· 提取到的名单将导入到当前班级：<b>五年1班</b><br>· <b>附加导入</b>=保留现有学生，编号重复的跳过<br>· <b>覆盖导入</b>=删除本班现有学生，用提取名单替换')">?</button></h3>
+        <div style="display:flex;flex-direction:column;gap:10px;margin:15px 0;">
+            <button type="button" class="btn btn-outline" style="width:100%;" onclick="doQrImport('append')">➕ 附加导入<span style="color:#999;font-size:12px;">（保留现有学生，编号重复的跳过）</span></button>
+            <button type="button" class="btn btn-danger" style="width:100%;" onclick="doQrImport('replace')">♻️ 覆盖导入<span style="font-size:12px;opacity:0.85;">（删除本班现有学生，用提取名单替换）</span></button>
+            <button type="button" class="btn btn-outline" style="width:100%;background:#f0f0f0;border-color:#f0f0f0;color:#666;" onclick="closeModeModal()">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- 学生分组管理弹窗 -->
+<div class="modal-mask" id="groupsModal">
+  <div class="modal" style="max-width:680px;max-height:88vh;overflow-y:auto;">
+    <h3>🪑 学生分组 <span style="font-size:12px;color:#999;font-weight:normal;">分组用于项目页「分组显示」与整组批量操作，不影响登记</span></h3>
+    <form id="groupAddForm" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;" autocomplete="off">
+        <input type="hidden" name="action" value="group_add" autocomplete="off">
+        <input type="hidden" name="class_id" value="2369" autocomplete="off">
+        <input type="text" name="gname" class="form-control" style="max-width:220px;" placeholder="新分组名称（如：第一组）" required autocomplete="off">
+        <button type="submit" class="btn btn-sm">＋ 建立分组</button>
+        <button type="button" class="btn btn-sm btn-outline" onclick="openSeatGroupModal()" title="在座位弹窗中拖拽 / 点选为学生入座，保存后按座位自动生成分组；大屏「座位模式」按此呈现">🪑 设置分组</button>
+    </form>
+        <div class="table-wrap">
+        <table class="data-table">
+            <thead><tr><th>分组名称</th><th style="width:90px;">人数</th><th style="width:180px;">操作</th></tr></thead>
+            <tbody id="groupsTbody"></tbody>
+        </table>
+    </div>
+        </div>
+</div>
+
+<!-- 名单表格（默认主内容） -->
+<div class="panel" id="rosterPanel">
+    <h3>学生名单 <span style="font-size:12px;color:#999;font-weight:normal;">点击姓名或「查阅记录」弹窗查看该生登记情况（与家长查询一致 · 全部项目可查）</span></h3>
+    <div class="toolbar">
+        <input type="text" id="searchBox" class="form-control" style="max-width:240px;" placeholder="搜索姓名 / 编号" oninput="filterTable()" autocomplete="off">
+        <div class="spacer"></div>
+                <button type="button" class="btn btn-sm" onclick="openAddModal()">➕ 添加学生</button>
+        <button type="button" class="btn btn-sm btn-outline" onclick="openGroupsModal()" title="建立 / 重命名分组，或按座位图自动生成">🪑 分组</button>
+        <div class="admin-dd">
+            <button type="button" class="btn btn-sm btn-outline" onclick="toggleDD(event,this)">⚙ 管理 ▾</button>
+            <div class="admin-dd-menu">
+                <a href="qrcode.html?class_id=2369">🎲 生成二维码</a>
+                                <a id="stuExportLink" href="#" onclick="exportStudents(); return false;">⬇ 导出</a>
+                <button type="button" id="stuReplaceBtn" class="dd-item" onclick="openReplaceImport()">⬆ 替换导入</button>
+                                <button type="button" class="dd-item dd-danger" onclick="clearRoster()">⚠️ 清空名单</button>
+            </div>
+        </div>
+            </div>
+    <div class="table-wrap">
+        <table class="data-table" id="studentTable">
+            <thead>
+                <tr>
+                    <th style="width:34px;"><input type="checkbox" onchange="selAllStu(this.checked)" title="全选 / 全不选" autocomplete="off"></th>                    <th>座号</th><th>姓名</th><th>编号</th><th>分组</th><th>备注</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="stuTbody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 查阅记录弹层：iframe 加载该生统计页（query.php 教师视图，与家长查询一致：三选项卡 / 矩阵 / 图表 / 综合报告，全部项目可查） -->
+<div class="modal-mask" id="studentStatsModal">
+    <div class="modal" style="width:960px;max-width:92vw;height:86vh;display:flex;flex-direction:column;">
+        <h3 id="studentStatsTitle">查阅学生登记记录</h3>
+        <iframe id="studentStatsFrame" src="about:blank" style="flex:1;width:100%;border:1px solid #e0e3ef;border-radius:8px;background:#fff;min-height:0;"></iframe>
+    </div>
+</div>
+
+<!-- 编辑学生弹层 -->
+<div class="modal-mask" id="editModal">
+    <div class="modal">
+        <h3>编辑学生</h3>
+        <form id="editStudentForm" autocomplete="off">
+            <input type="hidden" name="action" value="edit" autocomplete="off">
+            <input type="hidden" name="class_id" value="2369" autocomplete="off">
+            <input type="hidden" name="student_id" id="edit_id" autocomplete="off">
+            <div class="form-group"><label>座号 *</label><input type="text" name="seat_no" id="edit_seat" class="form-control" inputmode="numeric" pattern="[1-9][0-9]*" title="座号必填，须为 1 开始的自然数（如 1、2、3）" required autocomplete="off"></div>
+            <div class="form-group"><label>姓名 *</label><input type="text" name="name" id="edit_name" class="form-control" required autocomplete="off"></div>
+            <div class="form-group"><label>编号 *</label><input type="text" name="student_no" id="edit_no" class="form-control" required autocomplete="off"></div>
+            <div class="form-group"><label>备注</label><input type="text" name="remark" id="edit_remark" class="form-control" autocomplete="off"></div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline" onclick="closeEdit()">取消</button>
+                <button type="submit" class="btn">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 替换导入弹层：按编号匹配批量更新现有学生（座号/姓名/备注），编号不可改、不新增不删除 -->
+<div class="modal-mask" id="replaceModal">
+    <div class="modal" style="max-width:600px;">
+        <h3>⬆ 替换导入 <span style="font-size:12px;color:#999;font-weight:normal;">批量更新现有学生信息</span><button type="button" class="hint-q" onclick="toggleHint(event, '<b>替换导入说明</b><br>· 每行一人：<b>座号 姓名 编号 备注</b>（TAB / 空格 / 逗号分隔）<br>· 与「⬇ 导出」的文件格式一致，可导出后编辑再整表粘贴回来<br>· 按<b>编号</b>匹配本班现有学生，更新其<b>座号 / 姓名 / 备注</b><br>· 座号须为 <b>1 开始的自然数</b>（可留空）；编号随意设置<br>· <b>编号不允许替换修改</b>（仅作匹配依据）；不会新增或删除学生')">?</button></h3>
+        <form id="replaceForm" autocomplete="off">
+            <input type="hidden" name="class_id" value="2369" autocomplete="off">
+            <div class="form-group">
+                <textarea name="replace_area" class="form-control" style="min-height:200px;" placeholder="1 张三 2024001&#10;2 李四 2024002 组长&#10;（或直接粘贴导出的 CSV 文件内容）" required></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline" onclick="closeReplaceImport()">取消</button>
+                <button type="submit" class="btn">开始替换导入</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 清空名单：单机版无登录密码，confirm 确认后直接本地执行（见 clearRoster） -->
+
+<form id="actionForm" autocomplete="off">
+    <input type="hidden" name="action" id="act_action" autocomplete="off">
+    <input type="hidden" name="class_id" value="2369" autocomplete="off">
+    <input type="hidden" name="student_id" id="act_id" autocomplete="off">
+</form>
+
+<form id="groupForm" autocomplete="off">
+    <input type="hidden" name="action" id="g_action" autocomplete="off">
+    <input type="hidden" name="class_id" value="2369" autocomplete="off">
+    <input type="hidden" name="group_id" id="g_gid" autocomplete="off">
+    <input type="hidden" name="gname" id="g_name" autocomplete="off">
+</form>
+
+<!-- 设置分组弹层：iframe 加载 seat_modal.php（与大屏「进行分组 / 调整分组」共用同一弹窗）；保存后整页刷新同步座位与分组 -->
+<div class="modal-mask" id="seatGroupModal">
+    <div class="modal" style="width:1020px;max-width:94vw;height:88vh;display:flex;flex-direction:column;">
+        <!-- 弹窗内容（标题/取消/保存按钮）由 seat_modal.php 自带，此处仅承载 iframe -->
+        <iframe id="seatGroupFrame" src="about:blank" style="flex:1;width:100%;border:0;border-radius:8px;background:#fff;min-height:0;"></iframe>
+    </div>
+</div>
+
+<script src="assets/html5-qrcode.min.js"></script>
+<script>
+// 添加 / 分组弹窗（原顶部选项卡改为弹窗；名单为主内容常显）
+// 座号自动续号：取名单中最大座号 +1（每次点开「添加学生」自动预填；座号可重复，编号唯一）
+function nextSeatNo() {
+    var max = 0;
+    document.querySelectorAll('#studentTable tbody tr').forEach(function(tr) {
+        var cell = tr.querySelector('input.stu-sel') ? tr.children[1] : tr.children[0];
+        if (!cell) return;
+        var n = parseInt((cell.textContent || '').trim(), 10);
+        if (!isNaN(n) && n > max) max = n;
+    });
+    return max + 1;
+}
+function openAddModal() {
+    var seat = document.querySelector('#subtab-manual input[name="seat_no"]');
+    if (seat) seat.value = nextSeatNo();
+    document.getElementById('addModal').classList.add('show');
+}
+function closeAddModal() { document.getElementById('addModal').classList.remove('show'); }
+function openGroupsModal() { document.getElementById('groupsModal').classList.add('show'); }
+function closeGroupsModal() { document.getElementById('groupsModal').classList.remove('show'); }
+
+// 「添加」内子标签（手动添加 / EXCEL粘贴 / 扫码导入）
+document.querySelectorAll('.subtab-link').forEach(function(link) {
+    link.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.querySelectorAll('.subtab-link').forEach(function(l) { l.classList.remove('active'); });
+        document.querySelectorAll('.subtab-panel').forEach(function(p) { p.style.display = 'none'; });
+        link.classList.add('active');
+        document.getElementById('subtab-' + link.dataset.subtab).style.display = 'block';
+    });
+});
+
+// 编辑弹层
+function openEdit(s) {
+    document.getElementById('edit_id').value = s.id;
+    document.getElementById('edit_seat').value = s.seat_no;
+    document.getElementById('edit_name').value = s.name;
+    document.getElementById('edit_no').value = s.student_no;
+    document.getElementById('edit_remark').value = s.remark;
+    document.getElementById('editModal').classList.add('show');
+}
+function closeEdit() {
+    document.getElementById('editModal').classList.remove('show');
+}
+// 替换导入弹层
+function openReplaceImport() {
+    document.getElementById('replaceModal').classList.add('show');
+}
+function closeReplaceImport() {
+    document.getElementById('replaceModal').classList.remove('show');
+}
+// 清空名单：单机版无登录密码，确认后直接本地执行
+function clearRoster() {
+    if (!confirm('确认清空本班全部学生名单？该操作不可恢复！')) return;
+    DB.delWhere('students', function (s) { return s.class_id === CLASS_ID; }).then(function () {
+        showToast('学生名单已清空', 'success');
+        reload();
+    });
+}
+function doAction(action, id, confirmText) {
+    if (!confirm(confirmText)) return;
+    runStudentAction(action, id);
+}
+
+// ===== 学生分组（建/改/删走本地 IndexedDB；学生归属分组统一由「🪑 设置分组」按座位生成） =====
+// 设置分组弹窗：iframe 加载 seat_modal.html（与大屏共用），保存后整页刷新
+function openSeatGroupModal() {
+    document.getElementById('seatGroupFrame').src = 'seat_modal.html?class_id=' + CLASS_ID;
+    document.getElementById('seatGroupModal').classList.add('show');
+}
+function selAllStu(on) {
+    document.querySelectorAll('.stu-sel').forEach(function (cb) { cb.checked = on; });
+}
+function groupEdit(gid, oldName) {
+    var name = prompt('修改分组名称：', oldName);
+    if (name === null) return;
+    name = name.trim();
+    if (name === '' || name === oldName) return;
+    runGroupAction('group_edit', gid, name);
+}
+function groupDel(gid, name, cnt) {
+    if (!confirm('确认删除分组「' + name + '」？组内 ' + cnt + ' 名学生将变为未分组。')) return;
+    runGroupAction('group_del', gid, '');
+}
+
+// ===== 座位设置已迁移至 seat_modal.php（「🪑 设置分组」以 iframe 加载，见 openSeatGroupModal） =====
+
+// 名单搜索过滤
+function filterTable() {
+    var kw = document.getElementById('searchBox').value.trim().toLowerCase();
+    document.querySelectorAll('#studentTable tbody tr').forEach(function(tr) {
+        var name = (tr.dataset.name || '').toLowerCase();
+        var no = (tr.dataset.no || '').toLowerCase();
+        tr.style.display = (kw === '' || name.indexOf(kw) > -1 || no.indexOf(kw) > -1) ? '' : 'none';
+    });
+}
+
+// 扫码导入
+var qrScanner = null;
+function startQrScan() {
+    if (typeof Html5Qrcode === 'undefined') return;
+    qrScanner = new Html5Qrcode('qr-reader');
+    qrScanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 240, height: 240 } },
+        function(decodedText) {
+            document.getElementById('qr_content').value = decodedText;
+            submitQrImport();
+        },
+        function() {}
+    ).catch(function(err) {
+        document.getElementById('qr-reader').innerHTML = '<p style="padding:20px;color:#999;font-size:13px;">摄像头启动失败（需 HTTPS 或 localhost 环境），可直接在下方手动粘贴二维码内容。</p>';
+    });
+}
+function submitQrImport() {
+    var content = document.getElementById('qr_content').value.trim();
+    if (!content) { showToast('请先扫码、粘贴二维码内容/提取链接，或输入 8 位提取码', 'error'); return; }
+    // 弹窗选择导入方式：附加 / 覆盖
+    document.getElementById('importModeModal').classList.add('show');
+}
+function closeModeModal() {
+    document.getElementById('importModeModal').classList.remove('show');
+}
+function doQrImport(mode) {
+    var content = document.getElementById('qr_content').value.trim();
+    closeModeModal();
+    importQr(content, mode);
+}
+// 仅在「扫码导入」子标签可见时启动摄像头
+var scanTab = document.querySelector('.subtab-link[data-subtab="scan"]');
+if (scanTab) scanTab.addEventListener('click', function() {
+    if (!qrScanner) startQrScan();
+});
+</script>
+<script>
+// ===== 查阅记录弹窗（iframe 加载 query.php 教师视图：与家长查询一致的三选项卡呈现，不受公开查询设置限制、全部项目可查） =====
+function openStudentStats(sid, url) {
+    var frame = document.getElementById('studentStatsFrame');
+    var u = url || ('query.html?c=' + encodeURIComponent(CLS ? (CLS.class_code || '') : '') + '&sid=' + sid + '&tview=1');
+    if (u.indexOf('embed=1') === -1) u += (u.indexOf('?') === -1 ? '?' : '&') + 'embed=1'; // 内嵌模式：无导航无返回
+    frame.src = u;
+    document.getElementById('studentStatsModal').classList.add('show');
+}
+(function () {
+    var mask = document.getElementById('studentStatsModal');
+    if (!mask) return;
+    var frame = document.getElementById('studentStatsFrame');
+    // 关闭时卸载 iframe（遮罩空白点击 / layout 注入的 ✕ 按钮 / Esc 均生效）
+    mask.addEventListener('modalclosed', function () { frame.src = 'about:blank'; });
+    mask.addEventListener('click', function (e) {
+        if (e.target === mask) { mask.classList.remove('show'); frame.src = 'about:blank'; }
+    });
+})();
+</script>
+<script>
+// ===== ===== 本地实现：学生名单渲染与操作（原 students.php 后端逻辑 IndexedDB 化） =====
+var CLASS_ID = parseInt(new URLSearchParams(location.search).get('class_id'), 10) || 0;
+var CLS = null, STU = [], GROUPS = [];
+function esc(str) {
+    return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// onclick 属性内安全的 JS 字面量（配单引号属性；&#39; 被 HTML 解码回 \u0027 转义）
+function jsAttr(v) {
+    return JSON.stringify(v === null || v === undefined ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/'/g, '\\u0027');
+}
+function isSeatValid(v) { return /^[1-9][0-9]*$/.test(String(v == null ? '' : v).trim()); }
+
+// ---- 数据装载与渲染（班级不存在/已删除 → 回班级列表） ----
+function reload() {
+    return Promise.all([
+        DB.get('classes', CLASS_ID),
+        DB.by('students', 'class_id', CLASS_ID),
+        DB.find('stu_groups', function (g) { return g.class_id === CLASS_ID; })
+    ]).then(function (arr) {
+        if (!arr[0] || arr[0].deleted_at) { location.href = 'index.html'; return; }
+        CLS = arr[0];
+        STU = arr[1];
+        GROUPS = arr[2];
+        STU.sort(function (a, b) {
+            var sa = parseInt(a.seat_no, 10) || 0, sb = parseInt(b.seat_no, 10) || 0;
+            return sa !== sb ? sa - sb : (a.id - b.id);
+        });
+        GROUPS.sort(function (a, b) { return ((a.sort || 0) - (b.sort || 0)) || (a.id - b.id); });
+        document.title = '学生名单 - ' + CLS.name + ' - 潜记二维码作业登记系统';
+        renderStudents();
+        renderGroups();
+    });
+}
+// ---- 名单表格（原 while 循环渲染：座号/姓名+禁用徽章/编号/分组/备注/操作） ----
+function renderStudents() {
+    var tb = document.getElementById('stuTbody');
+    var cnt = document.getElementById('stuCount');
+    if (cnt) cnt.textContent = STU.length;
+    var ex = document.getElementById('stuExportLink'), rp = document.getElementById('stuReplaceBtn');
+    if (ex) ex.style.display = STU.length ? '' : 'none';
+    if (rp) rp.style.display = STU.length ? '' : 'none';
+    if (!STU.length) {
+        tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;">暂无学生，请先导入名单</td></tr>';
+        return;
+    }
+    var code = encodeURIComponent(String(CLS.class_code || ''));
+    var gmap = {};
+    GROUPS.forEach(function (g) { gmap[g.id] = g.name; });
+    var html = '';
+    STU.forEach(function (s) {
+        var sid = s.id, sdis = (parseInt(s.disabled, 10) || 0) ? true : false;
+        var gname = gmap[parseInt(s.group_id, 10) || 0] || '';
+        html += '<tr data-name="' + esc(s.name) + '" data-no="' + esc(s.student_no) + '"' + (sdis ? ' style="opacity:.55;"' : '') + '>'
+            + '<td><input type="checkbox" class="stu-sel" value="' + sid + '" title="选择该生" autocomplete="off"></td>'
+            + '<td>' + esc(s.seat_no) + '</td>'
+            + '<td><a href="query.html?c=' + code + '&sid=' + sid + '&tview=1" style="color:#667eea;text-decoration:none;font-weight:bold;" onclick="openStudentStats(' + sid + ', this.href); return false;">' + esc(s.name) + '</a>'
+            + (sdis ? ' <span title="已禁用：不打印卡片、扫码不登记（报表仍包含）" style="font-size:12px;color:#fff;background:#e74c3c;border-radius:4px;padding:1px 6px;">🚫 已禁用</span>' : '') + '</td>'
+            + '<td>' + esc(s.student_no) + '</td>'
+            + '<td><span style="font-size:12px;color:#888;">' + esc(gname || '未分组') + '</span></td>'
+            + '<td>' + esc(s.remark) + '</td>'
+            + '<td>'
+            + '<button type="button" class="btn btn-sm btn-outline" onclick="openStudentStats(' + sid + ')">查阅记录</button> '
+            + '<button type="button" class="btn btn-sm btn-outline" onclick=\'openEdit(' + jsAttr(s) + ')\'>编辑</button> '
+            + (sdis
+                ? '<button type="button" class="btn btn-sm btn-success" onclick="doAction(\'toggle_disable\', ' + sid + ', \'确认启用该学生？启用后恢复卡片打印与扫码登记。\')">启用</button>'
+                : '<button type="button" class="btn btn-sm btn-warning" onclick="doAction(\'toggle_disable\', ' + sid + ', \'确认禁用该学生？禁用后不打印其卡片、扫码不登记（报表仍包含）。\')">禁用</button>') + ' '
+            + '<button type="button" class="btn btn-sm btn-danger" onclick=\'doAction("delete", ' + sid + ', ' + jsAttr('确认删除学生 ' + (s.name || '') + '？') + ')\'>删除</button>'
+            + '</td></tr>';
+    });
+    tb.innerHTML = html;
+}
+// ---- 分组面板（原 groups 渲染：名称/人数/重命名/删除；空态含说明问号） ----
+function renderGroups() {
+    var tb = document.getElementById('groupsTbody');
+    if (!tb) return;
+    if (!GROUPS.length) {
+        tb.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">暂无分组<button type="button" class="hint-q" onclick=\'toggleHint(event, "<b>学生分组</b><br>· 可在上方输入名称建立分组<br>· 或点「🪑 设置分组」按座位自动生成（第1组、第2组…）")\'>?</button></td></tr>';
+        return;
+    }
+    var cntMap = {};
+    STU.forEach(function (s) { var g = parseInt(s.group_id, 10) || 0; if (g) cntMap[g] = (cntMap[g] || 0) + 1; });
+    var html = '';
+    GROUPS.forEach(function (g) {
+        html += '<tr><td>' + esc(g.name) + '</td><td>' + (cntMap[g.id] || 0) + ' 人</td><td>'
+            + '<button type="button" class="btn btn-sm btn-outline" onclick=\'groupEdit(' + g.id + ', ' + jsAttr(g.name) + ')\'>重命名</button> '
+            + '<button type="button" class="btn btn-sm btn-danger" onclick=\'groupDel(' + g.id + ', ' + jsAttr(g.name) + ', ' + (cntMap[g.id] || 0) + ')\'>删除</button>'
+            + '</td></tr>';
+    });
+    tb.innerHTML = html;
+}
+// ---- 批量插入（原 insert_students：座号/姓名/编号必填；座号 1 起自然数；编号唯一，重复跳过） ----
+function insertStudents(classId, students) {
+    return DB.by('students', 'class_id', classId).then(function (exist) {
+        var byNo = {};
+        exist.forEach(function (s) { byNo[String(s.student_no == null ? '' : s.student_no).trim()] = 1; });
+        var ok = 0, skip = 0, bad = 0, chain = Promise.resolve();
+        students.forEach(function (s0) {
+            var name = String(s0.name == null ? '' : s0.name).trim();
+            var no = String(s0.student_no == null ? '' : s0.student_no).trim();
+            var seat = String(s0.seat_no == null ? '' : s0.seat_no).trim();
+            if (name === '' || no === '' || seat === '') { skip++; return; }   // 座号、姓名、编号必填
+            if (!isSeatValid(seat)) { bad++; skip++; return; }                 // 座号须为 1 开始的自然数
+            (function (name, no, seat, remark) {
+                chain = chain.then(function () {
+                    if (byNo[no]) { skip++; return; }                          // 编号重复（唯一键冲突）
+                    byNo[no] = 1;
+                    return DB.insert('students', {
+                        class_id: classId, seat_no: seat, name: name, student_no: no, remark: remark,
+                        disabled: 0, group_id: 0, seat_pos: 0, created_at: DB.nowStr()
+                    }).then(function () { ok++; });
+                });
+            })(name, no, seat, String(s0.remark == null ? '' : s0.remark).trim());
+        });
+        return chain.then(function () { return { ok: ok, skip: skip, bad: bad }; });
+    });
+}
+// ---- EXCEL 粘贴导入（原 import_paste：每行 座号 姓名 编号 备注，TAB/空格/逗号分隔） ----
+function importPaste(area) {
+    var lines = String(area == null ? '' : area).split(/\r\n|\r|\n/);
+    var students = [];
+    lines.forEach(function (line0) {
+        var line = line0.trim();
+        if (line === '') return;
+        var f = line.split(/[\t,，]+|\s+/);
+        students.push({ seat_no: f[0] || '', name: f[1] || '', student_no: f[2] || '', remark: f[3] || '' });
+    });
+    insertStudents(CLASS_ID, students).then(function (r) {
+        var msg = '导入完成：成功 ' + r.ok + ' 人' + (r.skip ? '，跳过 ' + r.skip + ' 行（座号、姓名、编号必填、编号重复' + (r.bad ? '、座号须为 1 开始的自然数' : '') + '）' : '');
+        closeAddModal();
+        showToast(esc(msg), r.ok ? 'success' : 'error', !r.ok);
+        reload();
+    });
+}
+// ---- 提取码 / 提取链接解析（原 resolve_import_payload：qr_fetch 链接或 8 位码 → import_payloads → 班级码即时生成名单） ----
+function resolveImportPayload(raw) {
+    raw = String(raw == null ? '' : raw).trim();
+    var m = /qr_fetch\.php\?c=([0-9A-Za-z]+)/.exec(raw);
+    var code = m ? m[1] : (/^[0-9]{8}$/.test(raw) ? raw : '');
+    if (code === '') return Promise.resolve(null);
+    return DB.first('import_payloads', 'code', code).then(function (row) {
+        if (row && row.content) return row.content;
+        return DB.first('classes', 'class_code', code).then(function (c) {
+            if (!c || c.deleted_at) return null;
+            return DB.by('students', 'class_id', c.id).then(function (sts) {
+                return sts.length ? QJ.build_class_import_content(sts) : null;
+            });
+        });
+    });
+}
+// ---- 扫码导入（原 import_qr：bjdl 明文 / 提取链接 / 提取码均可；旧格式或缺座号按顺序自动补充：附加=接续本班最大座号、覆盖=从 1 起） ----
+function importQr(raw, mode) {
+    raw = String(raw == null ? '' : raw).trim();
+    mode = mode === 'replace' ? 'replace' : 'append';
+    var prep = (raw.indexOf('bjdl') === 0) ? Promise.resolve(raw)
+        : resolveImportPayload(raw).then(function (resolved) {
+            if (resolved === null) { showToast('无法识别内容：请扫描班级导入二维码、粘贴提取链接，或输入 8 位提取码 / 班级码', 'error', true); return null; }
+            return resolved;
+        });
+    prep.then(function (content) {
+        if (content === null) return;
+        var list = QJ.parse_class_import_content(content);
+        if (list === null) { showToast('二维码内容无法识别，请扫描【班级导入二维码】或输入 8 位提取码', 'error', true); return; }
+        list.forEach(function (s) {
+            s.seat_no = String(s.seat_no == null ? '' : s.seat_no).trim();
+            s.name = String(s.name == null ? '' : s.name).trim();
+            s.student_no = String(s.student_no == null ? '' : s.student_no).trim();
+            s.remark = String(s.remark == null ? '' : s.remark).trim();
+        });
+        var baseP = (mode === 'replace') ? Promise.resolve(0)
+            : DB.by('students', 'class_id', CLASS_ID).then(function (ex) {
+                var ms = 0;
+                ex.forEach(function (s) { var n = parseInt(String(s.seat_no == null ? '' : s.seat_no).trim(), 10); if (!isNaN(n) && n > ms) ms = n; });
+                return ms;
+            });
+        baseP.then(function (baseSeat) {
+            list.forEach(function (s) {
+                if (s.seat_no !== '' && isSeatValid(s.seat_no)) {
+                    var n = parseInt(s.seat_no, 10);
+                    if (n > baseSeat) baseSeat = n;
+                }
+            });
+            var auto = 0;
+            list.forEach(function (s) { if (s.seat_no === '') { baseSeat++; s.seat_no = String(baseSeat); auto++; } });
+            var autoNote = auto ? '；其中 ' + auto + ' 人缺座号，已按顺序自动补充' : '';
+            var delP = (mode === 'replace') ? DB.delWhere('students', function (s) { return s.class_id === CLASS_ID; }) : Promise.resolve();
+            delP.then(function () {
+                insertStudents(CLASS_ID, list).then(function (r) {
+                    var msg = (mode === 'replace'
+                        ? '覆盖导入完成：成功 ' + r.ok + ' 人（原名单已删除，用提取名单替换）'
+                        : '附加导入完成：成功 ' + r.ok + ' 人') + autoNote
+                        + (r.skip ? '，跳过 ' + r.skip + ' 人（编号重复、座号须为 1 开始的自然数）' : '');
+                    closeAddModal();
+                    showToast(esc(msg), r.ok ? 'success' : 'error', !r.ok);
+                    reload();
+                });
+            });
+        });
+    });
+}
+// ---- 页面动作分发（原 POST action=toggle_disable / delete；单用户无权限校验） ----
+function runStudentAction(action, sid) {
+    DB.get('students', sid).then(function (s) {
+        if (!s || s.class_id !== CLASS_ID) return;
+        if (action === 'toggle_disable') {
+            return DB.patch('students', sid, { disabled: (parseInt(s.disabled, 10) || 0) ? 0 : 1 }).then(function () {
+                showToast('学生状态已更新', 'success');
+                reload();
+            });
+        }
+        if (action === 'delete') {
+            return DB.del('students', sid).then(function () {
+                showToast('学生已删除', 'success');
+                reload();
+            });
+        }
+    });
+}
+// ---- 分组动作（原 group_add / group_edit / group_del） ----
+function runGroupAction(action, gid, gname) {
+    if (action === 'group_add') {
+        gname = String(gname == null ? '' : gname).trim();
+        if (gname === '') { showToast('分组名称不能为空', 'error', true); return; }
+        if (Array.from(gname).length > 50) { showToast('分组名称不能超过 50 字', 'error', true); return; }
+        DB.find('stu_groups', function (g) { return g.class_id === CLASS_ID; }).then(function (gs) {
+            var mx = 0;
+            gs.forEach(function (g) { mx = Math.max(mx, parseInt(g.sort, 10) || 0); });
+            return DB.insert('stu_groups', { class_id: CLASS_ID, name: gname, sort: mx + 1, created_at: DB.nowStr() });
+        }).then(function () {
+            showToast('分组「' + esc(gname) + '」已建立', 'success');
+            reload();
+        });
+    } else if (action === 'group_edit') {
+        DB.get('stu_groups', gid).then(function (g) {
+            if (!g || g.class_id !== CLASS_ID || g.name === gname) { showToast('分组不存在或名称未变化', 'error', true); return; }
+            return DB.patch('stu_groups', gid, { name: gname }).then(function () {
+                showToast('分组名称已更新', 'success');
+                reload();
+            });
+        });
+    } else if (action === 'group_del') {
+        DB.get('stu_groups', gid).then(function (g) {
+            if (!g || g.class_id !== CLASS_ID) { showToast('分组不存在', 'error', true); return; }
+            return DB.find('students', function (s) { return s.class_id === CLASS_ID && (parseInt(s.group_id, 10) || 0) === gid; }).then(function (sts) {
+                var chain = Promise.resolve();
+                sts.forEach(function (s) {
+                    (function (s) { chain = chain.then(function () { return DB.patch('students', s.id, { group_id: 0 }); }); })(s);
+                });
+                return chain.then(function () { return DB.del('stu_groups', gid); }).then(function () {
+                    showToast('分组已删除（组内学生已变为未分组）', 'success');
+                    reload();
+                });
+            });
+        });
+    }
+}
+// ---- 下载导入模板（原 students.php?template=1：UTF-8 BOM CSV，与粘贴/替换导入格式一致） ----
+function dlStuTpl(ev) {
+    if (ev) ev.preventDefault();
+    var csv = '\uFEFF座号,姓名,编号,备注\n1,张三,2024001,\n2,李四,2024002,组长\n';
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '学生名单导入模板.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 300);
+    return false;
+}
+// ---- 导出名单（原 students.php?export=1：座号,姓名,编号,备注 CSV，UTF-8 BOM，按座号+id 排序） ----
+function csvField(v) {
+    v = String(v == null ? '' : v);
+    return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+function exportStudents() {
+    var lines = ['座号,姓名,编号,备注'];
+    STU.forEach(function (s) {
+        lines.push([csvField(s.seat_no), csvField(s.name), csvField(s.student_no), csvField(s.remark)].join(','));
+    });
+    var blob = new Blob(['\uFEFF' + lines.join('\n') + '\n'], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '学生名单-' + (CLS ? CLS.name : '') + '.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 300);
+}
+// ---- 上下文链接修正：静态页印死的 class_id 全部替换为当前班级 ----
+function fixCtxLinks() {
+    document.querySelectorAll('a[href]').forEach(function (a) {
+        var href = a.getAttribute('href') || '';
+        if (href.indexOf('class_id=') === -1) return;
+        a.setAttribute('href', href.replace(/([?&]class_id=)\d+/g, '$1' + CLASS_ID));
+    });
+}
+// ---- 顶部班级切换器（原学校切换 select 改造） ----
+function fillClassSwitch() {
+    var sel = document.getElementById('navClassSwitch');
+    if (!sel) return;
+    DB.find('classes', function (c) { return !c.deleted_at; }).then(function (cs) {
+        cs.sort(function (a, b) { return a.id - b.id; });
+        sel.innerHTML = cs.map(function (c) {
+            return '<option value="' + c.id + '"' + (c.id === CLASS_ID ? ' selected' : '') + '>' + esc(c.name) + '</option>';
+        }).join('');
+    });
+}
+function switchClass(v) {
+    var id = parseInt(v, 10) || 0;
+    if (id && id !== CLASS_ID) location.href = 'students.html?class_id=' + id;
+}
+// ---- 表单处理 ----
+function initFormHandlers() {
+    // 手动添加（原 action=add：座号自动预填最大+1，可修改；座号可重复，编号唯一）
+    document.getElementById('manualAddForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var s = {
+            seat_no: this.querySelector('[name=seat_no]').value.trim(),
+            name: this.querySelector('[name=name]').value.trim(),
+            student_no: this.querySelector('[name=student_no]').value.trim(),
+            remark: this.querySelector('[name=remark]').value.trim()
+        };
+        if (s.seat_no === '' || s.name === '' || s.student_no === '') { showToast('添加失败：座号、姓名、编号必填', 'error', true); return; }
+        if (!isSeatValid(s.seat_no)) { showToast('添加失败：座号须为 1 开始的自然数（如 1、2、3）', 'error', true); return; }
+        insertStudents(CLASS_ID, [s]).then(function (r) {
+            if (r.ok) { closeAddModal(); showToast('学生添加成功', 'success'); reload(); }
+            else showToast('添加失败：编号已存在', 'error', true);
+        });
+    });
+    // EXCEL 粘贴导入（原 action=import_paste）
+    document.getElementById('pasteImportForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        importPaste(this.querySelector('[name=paste_area]').value);
+    });
+    // 编辑学生（原 action=edit；编号与其他学生重复则报错）
+    document.getElementById('editStudentForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var sid = parseInt(document.getElementById('edit_id').value, 10) || 0;
+        var seat = document.getElementById('edit_seat').value.trim();
+        var name = document.getElementById('edit_name').value.trim();
+        var no = document.getElementById('edit_no').value.trim();
+        var remark = document.getElementById('edit_remark').value.trim();
+        if (seat === '' || name === '' || no === '') { showToast('更新失败：座号、姓名、编号必填', 'error', true); return; }
+        if (!isSeatValid(seat)) { showToast('更新失败：座号须为 1 开始的自然数（如 1、2、3）', 'error', true); return; }
+        DB.find('students', function (s) { return s.class_id === CLASS_ID && s.id !== sid && String(s.student_no == null ? '' : s.student_no).trim() === no; }).then(function (dups) {
+            if (dups.length) { showToast('更新失败：编号可能与其他学生重复', 'error', true); return; }
+            return DB.patch('students', sid, { seat_no: seat, name: name, student_no: no, remark: remark }).then(function () {
+                closeEdit();
+                showToast('学生信息已更新', 'success');
+                reload();
+            });
+        });
+    });
+    // 替换导入（原 action=replace_import：按编号匹配更新座号/姓名/备注，跳过导出文件表头行）
+    document.getElementById('replaceForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var lines = String(this.querySelector('[name=replace_area]').value || '').split(/\r\n|\r|\n/);
+        DB.by('students', 'class_id', CLASS_ID).then(function (exist) {
+            var byNo = {};
+            exist.forEach(function (s) { byNo[String(s.student_no == null ? '' : s.student_no).trim()] = s.id; });
+            var upd = 0, skip = 0, bad = 0, chain = Promise.resolve();
+            lines.forEach(function (line0) {
+                var line = line0.trim();
+                if (line === '') return;
+                var f = line.split(/[\t,，]+|\s+/);
+                if (f[0] === '座号') return;   // 跳过「⬇ 导出」文件的表头行
+                var seat = f[0] || '', name = f[1] || '', no = f[2] || '', remark = f[3] || '';
+                var sid = (no !== '' && byNo[no] !== undefined) ? byNo[no] : 0;
+                if (sid <= 0 || name === '' || seat === '') { skip++; return; }   // 编号不存在或座号/姓名/编号必填缺失：跳过
+                if (!isSeatValid(seat)) { bad++; skip++; return; }
+                (function (sid, seat, name, remark) {
+                    chain = chain.then(function () {
+                        return DB.patch('students', sid, { seat_no: seat, name: name, remark: remark }).then(function () { upd++; });
+                    });
+                })(sid, seat, name, remark);
+            });
+            return chain.then(function () {
+                var msg = '替换导入完成：更新 ' + upd + ' 人' + (skip ? '，跳过 ' + skip + ' 行（编号不存在、座号/姓名/编号必填' + (bad ? '、座号须为 1 开始的自然数' : '') + '）' : '');
+                closeReplaceImport();
+                showToast(esc(msg), upd ? 'success' : 'error', !upd);
+                reload();
+            });
+        });
+    });
+    // 建立分组（原 action=group_add）
+    document.getElementById('groupAddForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        runGroupAction('group_add', 0, this.querySelector('[name=gname]').value);
+    });
+}
+// ---- 初始化 ----
+initFormHandlers();
+if (!CLASS_ID) { location.href = 'index.html'; }
+else {
+    reload().then(function () { fixCtxLinks(); });
+    fillClassSwitch();
+}
+</script>
+</div>
+<style>
+/* ===== 全局操作反馈 toast：页面下方中央、黑色（同 omr_scan.php）；3 秒自动消失，sticky=重要提示需点击才消失 ===== */
+.toast-wrap { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:3000; display:flex; flex-direction:column-reverse; gap:8px; align-items:center; max-width:92vw; pointer-events:none; }
+.toast { pointer-events:auto; background:rgba(40,44,60,0.92); color:#fff; box-shadow:0 8px 24px rgba(0,0,0,0.28); border-radius:10px; padding:10px 16px; font-size:14px; line-height:1.6; max-width:92vw; word-break:break-all; cursor:pointer; animation:toastIn .22s ease; }
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@media (max-width: 768px) { .toast-wrap { bottom:76px; } }
+/* ===== 行内小问号按钮（点击在问号旁弹出说明浮层；与右上角大 ? 操作帮助并存） ===== */
+.hint-q { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; min-width:16px; border-radius:50%; background:#667eea; color:#fff; font-size:11px; font-weight:bold; line-height:1; border:none; cursor:pointer; vertical-align:middle; margin:0 0 2px 6px; padding:0; box-shadow:0 1px 4px rgba(102,126,234,0.4); font-family:inherit; }
+.hint-q:hover { background:#5568d3; }
+/* 小问号说明浮层：紧贴问号按钮（优先下方，放不下翻转到上方），点浮层外/再点同一个小问号收起 */
+.hint-pop { position:fixed; z-index:4000; background:#fff; color:#333; border:1px solid #e3e6f0; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.18); padding:12px 14px; font-size:13px; line-height:1.8; text-align:left; max-width:340px; max-height:70vh; overflow-y:auto; word-break:break-all; animation:toastIn .18s ease; }
+.hint-pop b { color:#667eea; }
+@media (max-width: 768px) { .hint-pop { max-width:92vw; } }
+</style>
+<script>
+// ===== 全局操作反馈 toast：showToast(msg, type, sticky) 页面下方中央黑色（同 omr_scan.php）；sticky=true 重要提示需点击才消失 =====
+function showToast(msg, type, sticky) {
+    var wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.className = 'toast-wrap'; document.body.appendChild(wrap); }
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' toast-' + type : '');
+    t.innerHTML = msg;
+    t.addEventListener('click', function () { dismiss(); });
+    wrap.appendChild(t);
+    var tm = null;
+    function dismiss() { if (tm) clearTimeout(tm); if (t.parentNode) t.parentNode.removeChild(t); }
+    if (!sticky) tm = setTimeout(dismiss, 3000);
+    return t;
+}
+// 页面内 PHP 渲染的 .alert-success/.alert-error/.alert-danger 横幅自动转浮窗（error 需点击关闭；info/warning 常驻说明保留横幅）
+(function () {
+    document.querySelectorAll('.alert.alert-success, .alert.alert-error, .alert.alert-danger').forEach(function (el) {
+        var type = el.classList.contains('alert-success') ? 'success' : 'error';
+        showToast(el.innerHTML, type, type === 'error');
+        el.style.display = 'none';
+    });
+})();
+// ===== 行内小问号说明：toggleHint(event, 'HTML 说明文字') → 问号旁浮层（优先下方，放不下翻转到上方；点浮层外/再点同一个小问号收起） =====
+function hintPopPos(p) {
+    var b = p.__src; if (!b) return;
+    var r = b.getBoundingClientRect();
+    var pw = p.offsetWidth, ph = p.offsetHeight;
+    var left = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, window.innerWidth - pw - 8));
+    var top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;   // 下方放不下：翻转到上方
+    p.style.left = left + 'px';
+    p.style.top = Math.max(8, top) + 'px';
+}
+function hintPopClose() {
+    var p = document.getElementById('hintPop');
+    if (p && p.parentNode) p.parentNode.removeChild(p);
+}
+function toggleHint(ev, html) {
+    ev.stopPropagation();
+    var b = ev.currentTarget;
+    var old = document.getElementById('hintPop');
+    if (old && old.__src === b) { hintPopClose(); return; }   // 再点同一个小问号：收起
+    hintPopClose();
+    var p = document.createElement('div');
+    p.id = 'hintPop';
+    p.className = 'hint-pop';
+    p.innerHTML = html;
+    p.__src = b;
+    p.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.body.appendChild(p);
+    hintPopPos(p);
+    window.addEventListener('scroll', hintPopSync, true);
+    window.addEventListener('resize', hintPopSync);
+}
+// 滚动/缩放时跟随问号按钮重新定位；按钮已从 DOM 移除（如弹窗关闭）则连带收起
+function hintPopSync() {
+    var p = document.getElementById('hintPop');
+    if (!p) return;
+    if (!p.__src || !p.__src.isConnected) { hintPopClose(); return; }
+    hintPopPos(p);
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.hint-pop')) return;
+    hintPopClose();
+});
+// ===== 全局「⚙ 管理 ▾」二级菜单开关（classes/projects/project_view 卡片与工具栏共用；展开时抬升所在卡片层级避免遮挡） =====
+function toggleDD(e, btn) {
+    e.stopPropagation();
+    var dd = btn.closest('.admin-dd');
+    if (!dd) return;
+    var wasOpen = dd.classList.contains('open');
+    document.querySelectorAll('.admin-dd.open').forEach(function (d) {
+        d.classList.remove('open');
+        var card = d.closest('.item-card');
+        if (card) card.classList.remove('dd-top');
+    });
+    if (!wasOpen) {
+        dd.classList.add('open');
+        var card = dd.closest('.item-card');
+        if (card) card.classList.add('dd-top');
+    }
+    btn.classList.toggle('active', dd.classList.contains('open'));   // project_view ⚙ 按钮高亮态
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.pv-dd')) return;   // project_view ⚙ 视图工具条自管（内部点击不收起）
+    document.querySelectorAll('.admin-dd.open').forEach(function (d) {
+        d.classList.remove('open');
+        var card = d.closest('.item-card');
+        if (card) card.classList.remove('dd-top');
+    });
+});
+</script>
+<script>
+function togglePageHelp(open) {
+    var m = document.getElementById('pageHelpModal');
+    if (m) m.classList.toggle('show', open);
+}
+// 三组选项卡切换（班级管理/项目列表：我的 / 授权 / 其他）
+function switchCtxTab(btn, group, key) {
+    btn.parentElement.querySelectorAll('.ctx-tab').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    document.querySelectorAll('.ctx-tabpane[data-group="' + group + '"]').forEach(function (p) {
+        p.style.display = (p.getAttribute('data-key') === key) ? '' : 'none';
+    });
+}
+// 所有弹窗统一注入「最大化 / 还原」+「✕ 关闭」按钮（顺序：最大化 关闭；PC 自动宽高、手机 90%，均可一键撑满）
+(function () {
+    function initModalMaxBtns() {
+        document.querySelectorAll('.modal-mask .modal').forEach(function (m) {
+            if (m.querySelector('.modal-max-btn')) return;
+            var max = document.createElement('button');
+            max.type = 'button';
+            max.className = 'modal-max-btn';
+            max.title = '最大化 / 还原';
+            max.innerHTML = '&#x2922;';
+            max.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var maxed = m.classList.toggle('modal-max');
+                max.innerHTML = maxed ? '&#x2923;' : '&#x2922;';
+            });
+            m.appendChild(max);
+            // ✕ 关闭按钮（位于最大化右侧）：关闭所属弹窗，还原最大化状态并广播 modalclosed
+            var close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'modal-close-btn';
+            close.title = '关闭';
+            close.setAttribute('aria-label', '关闭');
+            close.innerHTML = '&#x2715;';
+            close.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var mask = m.closest('.modal-mask');
+                m.classList.remove('modal-max');
+                max.innerHTML = '&#x2922;';
+                if (mask) {
+                    mask.classList.remove('show');
+                    mask.dispatchEvent(new CustomEvent('modalclosed', { bubbles: false }));
+                }
+            });
+            m.appendChild(close);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initModalMaxBtns);
+    } else {
+        initModalMaxBtns();
+    }
+})();
+</script>
+</body>
+</html>
+

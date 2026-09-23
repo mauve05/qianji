@@ -1,0 +1,2711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登记统计 - 潜记二维码作业登记系统</title>
+    <link rel="stylesheet" href="css/style.css?v=20260915">
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="favicon.ico"/>
+    <script src="js/db.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/sw_boot.js"></script>
+</head>
+<body>
+<nav class="navbar">
+        <div class="navbar-inner">
+        <a class="navbar-brand" href="index.html">潜记 · 作业登记</a>
+        <div class="navbar-menu">
+                        <a data-href="projects.html?class_id={cid}" href="classes.html" data-cid>班级情况</a>
+                        <a data-href="students.html?class_id={cid}" href="classes.html" data-cid>学生列表</a>
+                        <a data-href="stats.html?class_id={cid}" href="classes.html" class="active" data-cid>班级统计</a>
+                    </div>
+        <!-- 移动端：汉堡按钮 → 左侧抽屉菜单 -->
+        <button type="button" class="nav-burger" onclick="toggleDrawer(true)" aria-label="打开菜单">☰</button>
+    </div>
+</nav>
+<!-- 移动端左侧抽屉菜单 -->
+<div class="drawer-mask" id="drawerMask" onclick="toggleDrawer(false)"></div>
+<aside class="side-drawer" id="sideDrawer" aria-label="导航菜单">
+    <div class="drawer-head">
+        <b>潜记 · 作业登记</b>
+        <button type="button" class="drawer-close" onclick="toggleDrawer(false)" aria-label="关闭菜单">✕</button>
+    </div>
+        <nav class="drawer-nav">
+                <a data-href="projects.html?class_id={cid}" href="classes.html" data-cid>班级情况</a>
+                <a data-href="students.html?class_id={cid}" href="classes.html" data-cid>学生列表</a>
+                <a data-href="stats.html?class_id={cid}" href="classes.html" class="active" data-cid>班级统计</a>
+            </nav>
+</aside>
+<script>
+function toggleDrawer(open) {
+    var d = document.getElementById('sideDrawer');
+    var m = document.getElementById('drawerMask');
+    if (!d || !m) return;
+    d.classList.toggle('open', open);
+    m.classList.toggle('show', open);
+}
+</script>
+<!-- 移动端底部导航栏（PC 隐藏，≤768px 显示）：随上下文变化（默认：班级列表/统计报表/个人中心；班级：班级情况/学生列表/班级统计/个人中心；项目：项目情况/扫码登记/项目统计/个人中心）。加入学校/后台管理仅 PC 显示 -->
+<nav class="bottom-nav">
+        <a class="bottom-nav-item" data-href="projects.html?class_id={cid}" href="classes.html" data-cid>
+        <span class="bottom-nav-icon">📘</span>
+        <span class="bottom-nav-text">班级情况</span>
+    </a>
+        <a class="bottom-nav-item" data-href="students.html?class_id={cid}" href="classes.html" data-cid>
+        <span class="bottom-nav-icon">👥</span>
+        <span class="bottom-nav-text">学生列表</span>
+    </a>
+        <a class="bottom-nav-item active" data-href="stats.html?class_id={cid}" href="classes.html" data-cid>
+        <span class="bottom-nav-icon">📊</span>
+        <span class="bottom-nav-text">班级统计</span>
+    </a>
+    </nav>
+<div class="app-content">
+<span id="backWrap"></span>
+<div id="viewRoot"></div>
+
+<!-- 学生每次明细弹窗（登记矩阵点姓名列）：该生每次状态/说明 -->
+<div class="modal-mask" id="stuMatrixModal" onclick="if(event.target===this)this.classList.remove('show')">
+<div class="modal" style="max-width:600px;">
+<h3 id="smx_title">👤 学生明细</h3>
+<div class="table-wrap" style="max-height:52vh;overflow:auto;">
+<table class="data-table">
+    <thead><tr><th style="min-width:150px;">项目</th><th style="width:90px;">状态</th><th>说明</th></tr></thead>
+    <tbody id="smx_body"><tr><td colspan="3" style="text-align:center;color:#999;">—</td></tr></tbody>
+</table>
+</div>
+<div class="modal-actions">
+    <button type="button" class="btn" onclick="document.getElementById('stuMatrixModal').classList.remove('show')">关闭</button>
+</div>
+</div>
+</div>
+
+<!-- 统计图表弹窗：数据 × 图型自由切换（班级总览 / 单项目 / 学生视图） -->
+<div class="modal-mask" id="chartModal">
+    <div class="modal" style="width:760px;max-width:92vw;">
+        <h3>📊 统计图表<button type="button" class="hint-q" onclick="toggleHint(event, '<b>统计图表说明</b><br>· 各项目登记率：一次性=已登记人数 ÷ 全班人数；打卡项目=有打卡记录人数 ÷ 全班人数<br>· 评价分布=各评价内容出现的人次（先选项目再查看）<br>· 单项目视图另有每日打卡人数 / 每生打卡天数 / 登记状态分布<br>· 图表右上角可保存为图片')">?</button></h3>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:14px;">
+                数据
+                <select id="chart_ds" class="form-control" style="width:auto;padding:4px 8px;" onchange="onChartDsChange()"></select>
+            </label>
+            <label id="chart_proj_wrap" style="display:none;align-items:center;gap:6px;font-size:14px;">
+                项目
+                <select id="chart_proj" class="form-control" style="width:auto;max-width:220px;padding:4px 8px;" onchange="renderChart()"></select>
+            </label>
+            <div style="flex:1;"></div>
+            <div style="display:flex;gap:6px;">
+                <button type="button" class="btn btn-sm btn-outline chart-type" data-t="bar" onclick="setChartType(this)">条形图</button>
+                <button type="button" class="btn btn-sm btn-outline chart-type" data-t="line" onclick="setChartType(this)">折线图</button>
+                <button type="button" class="btn btn-sm btn-outline chart-type" data-t="pie" onclick="setChartType(this)">饼图</button>
+            </div>
+        </div>
+        <div id="chartCanvas" style="height:360px;width:100%;"></div>
+        <div id="chart_empty" style="display:none;text-align:center;color:#999;padding:30px 0;">暂无可绘图的数据</div>
+    </div>
+</div>
+
+<!-- 批量点评弹窗 -->
+<style>
+#cmList { overflow-y: auto; min-height: 0; flex: 1; border: 1px solid #eef1f8; border-radius: 8px; }
+.cm-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid #f2f4fa; }
+.cm-row:last-child { border-bottom: 0; }
+.cm-row.cm-touched { background: #f6f8ff; }
+.cm-info { width: 200px; min-width: 150px; line-height: 1.4; }
+.cm-info b { font-size: 13.5px; color: #333; }
+.cm-info small { display: block; color: #98a0b3; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cm-input { flex: 1; }
+</style>
+<div class="modal-mask" id="cmModal">
+    <div class="modal" style="width:680px;max-width:94vw;height:82vh;display:flex;flex-direction:column;">
+        <h3>✍ 批量点评 - <span id="cmTitle"></span></h3>
+        <div style="display:flex;flex-direction:column;gap:8px;min-height:0;flex:1;">
+            <div style="border:1px dashed #dfe4fb;border-radius:8px;padding:8px 10px;background:#fbfbfe;">
+                <div style="font-size:12px;color:#8a93a3;margin-bottom:6px;">📋 批量导入：每行一条「<b>编号或姓名,点评内容</b>」（逗号/Tab 分隔），解析后填充到下方输入框；只填编号或姓名不加内容 = 清除该生点评</div>
+                <textarea id="cmPaste" class="form-control" rows="3" placeholder="2024001,本学期进步明显，继续加油！&#10;张三,课堂发言积极" style="resize:vertical;font-size:12.5px;"></textarea>
+                <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+                    <button type="button" class="btn btn-sm btn-outline" onclick="cmParsePaste()">解析填充</button>
+                    <span id="cmParseMsg" style="font-size:12px;color:#98a0b3;"></span>
+                </div>
+            </div>
+            <div id="cmList"></div>
+        </div>
+        <div class="modal-actions" style="margin-top:10px;">
+            <span id="cmStat" style="font-size:12px;color:#98a0b3;margin-right:auto;"></span>
+            <button type="button" class="btn btn-outline" onclick="closeModal('cmModal')">取消</button>
+            <button type="button" class="btn" onclick="cmSave()">保存点评</button>
+        </div>
+    </div>
+</div>
+
+<script src="assets/echarts.min.js"></script>
+<script src="assets/jszip.min.js"></script>
+<script>
+// ===== 登记统计中心（三视图）单机版：班级总览 / 单项目统计 / 学生统计 =====
+'use strict';
+var QS = new URLSearchParams(location.search);
+var PROJECT_ID = parseInt(QS.get('project_id'), 10) || 0;
+var STUDENT_ID = parseInt(QS.get('student_id'), 10) || 0;
+var EMBED = QS.get('embed') === '1';
+var CLASS_ID = parseInt(QS.get('class_id'), 10) || 0;
+var GET_ROUND = parseInt(QS.get('round'), 10) || 0;
+var GET_OMR_CLS = parseInt(QS.get('omr_cls'), 10) || 0;
+var GET_QCLS = parseInt(QS.get('qcls'), 10) || 0;
+
+var SCOPE_NAMES = { school: '全校项目', grade: '年段项目', subject: '学科项目', class: '班级项目', class_subject: '班级学科项目' };
+var EVAL_NAMES = { smile: '笑脸', score: '数值', grade: '优良', star: '星级', comment: '评语', points: '十分' };
+// 小问号说明文字（保持与原版一致）
+var HQ = {
+    omrParts: "'<b>答题卡统计口径说明</b><br>· 得分率=Σ得分÷Σ满分（逐次/总体同口径）<br>· 优秀率=个体得分率≥80%；及格率=≥60%；低分率=&lt;30%<br>· 超均率=(单位得分率−全体得分率)÷全体得分率×100%<br>· 参考人数=该次有已批改成绩的学生数<br>· 已禁用学生不计入'",
+    qzParts: "'<b>举牌/答题统计口径说明</b><br>· 正确率=答对人数÷答题人数（逐次/总体同口径）<br>· 正确答案在项目页「统计」弹窗勾选保存，未设答案的题次不判对错<br>· 超均率=(单位正确率−全体正确率)÷全体正确率×100%<br>· 参与人数=有任一次答题记录的学生数；已禁用学生不计入'",
+    omrRound: "'<b>多次汇总表</b><br>全项目跨班按次汇总（参考学情看板「一均三率」）：<br>· 平均分=该次Σ得分÷人数；得分率=Σ得分÷Σ满分<br>· 优秀率≥80%、及格率≥60%、低分率&lt;30%（按个体得分率）<br>· 点击表头「查看题卡」入口见扫描页'",
+    omrStu: "'<b>学生个人成绩表</b><br>· 各次=该次得分率（括号内为 得分/满分）<br>· 总得分率=Σ得分÷Σ满分；等级：A≥80% B≥70% C≥60% D&lt;60%<br>· 班名=本班按总得分率排名（同分并列）<br>· 超均率=(个人得分率−本班均分)÷本班均分×100%'",
+    qzRound: "'<b>多次汇总表</b><br>全项目跨班按次汇总：<br>· 正确率=该次答对人数÷答题人数（未设答案不判对错）<br>· 选项分布=该次 A/B/C/D 各选项人数与占比，绿框=正确答案<br>· 正确答案在项目页「统计」弹窗勾选保存'",
+    qzStu: "'<b>学生个人答题表</b><br>· 各次=该生所举/所选选项：<span style=&quot;color:#27ae60;&quot;>绿=对</span>、<span style=&quot;color:#e74c3c;&quot;>红=错</span>、灰=未答、蓝=未设答案不判<br>· 总正确率=Σ答对÷Σ答题；等级：A≥80% B≥70% C≥60% D&lt;60%<br>· 班名=本班按总正确率排名（同分并列）<br>· 超均率=(个人正确率−本班平均正确率)÷本班平均正确率×100%'",
+    matrix: "'<b>登记矩阵说明</b><br>· 行=每次（打卡模式=日期），列=本班学生（按座号排序）<br>· √=已登记/已打卡；字母=该次选项（绿=答对 红=答错 灰=未设答案）；得分/满分（绿=≥60% 红=&lt;60%）<br>· ·=未登记；底部合计=该生完成次数<br>· 点击列头姓名查看该生每次明细'"
+};
+function hq(key) { return '<button type="button" class="hint-q" onclick="toggleHint(event, ' + HQ[key] + ')">?</button>'; }
+function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+function seatNum(v) { var n = parseInt(v, 10); return isNaN(n) ? 0 : n; }
+function seatCmp(a, b) { return seatNum(a.seat_no) - seatNum(b.seat_no) || (a.id - b.id); }
+function omn(v) {   // 最多 1 位小数去尾零（同 PHP number_format+ rtrim）
+    var s = (Math.round(parseFloat(v || 0) * 10) / 10).toFixed(1);
+    s = s.replace(/\.0$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    return (s === '' || s === '-0') ? '0' : s;
+}
+function rankDesc(pairs) {   // [[sid, rate]] 降序同率并列 → {sid: 名次}
+    pairs.sort(function (a, b) { return b[1] - a[1]; });
+    var rank = {}, pos = 0, prev = null, i = 0;
+    pairs.forEach(function (p) {
+        i++;
+        if (prev === null || p[1] < prev) { pos = i; prev = p[1]; }
+        rank[p[0]] = pos;
+    });
+    return rank;
+}
+function openModal(id) {
+    document.getElementById(id).classList.add('show');
+    if (id === 'chartModal') renderChart();
+}
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+// 点击遮罩空白处关闭
+document.querySelectorAll('.modal-mask').forEach(function (m) {
+    m.addEventListener('click', function (e) { if (e.target === m) m.classList.remove('show'); });
+});
+
+// ===== 数据与视图状态 =====
+var D = { classes: [], students: [], projects: [], records: [], record_days: [], rounds: [], rr: [], omr: [], omrTpl: [], omrAns: [], comments: [] };
+var VIEW = 'class', CLASS = null, TOTAL_STUDENTS = 0;
+var CHART_SETS = {}, CHART_DATA = {}, CHART_EVAL = {};
+var PV = null;   // project 视图计算结果
+var SV = null;   // student 视图计算结果
+var MX_DATA = null;
+
+function projectClassIds(p) {
+    if (p.scope === 'grade' && (parseInt(p.grade_id, 10) || 0) > 0) {
+        return D.classes.filter(function (c) { return !c.deleted_at && (parseInt(c.grade_id, 10) || 0) === (parseInt(p.grade_id, 10) || 0); }).map(function (c) { return c.id; });
+    }
+    if (p.scope === 'school' || p.scope === 'subject') {
+        return D.classes.filter(function (c) { return !c.deleted_at; }).map(function (c) { return c.id; });
+    }
+    return p.class_id ? [parseInt(p.class_id, 10)] : [];
+}
+function roundsOf(pid) {   // 同 PHP project_rounds_list：无轮次时视为第 1 次
+    var rs = D.rounds.filter(function (r) { return parseInt(r.project_id, 10) === pid; })
+        .sort(function (a, b) { return a.round_no - b.round_no; })
+        .map(function (r) { return { no: r.round_no, title: String(r.title || '') }; });
+    if (!rs.length) rs = [{ no: 1, title: '' }];
+    return rs;
+}
+function evalName(p) { return EVAL_NAMES[p.eval_mode] || p.eval_mode; }
+function parseScore(score) {   // "g/t" → {g,t}，t<=0 视为无效
+    var parts = String(score || '').split('/');
+    var g = parseFloat(parts[0]) || 0, t = parts.length > 1 ? (parseFloat(parts[1]) || 0) : 0;
+    return t > 0 ? { g: g, t: t } : { g: 0, t: 0 };
+}
+// 答题卡生效答案上下文（绑定模板题组 + 独立录入答案补缺，同识别端口径）
+function omrAnswerCtx(pid, needPts) {
+    var ctx = { secs: [], kind: {}, key: {}, opts: {}, pts: {}, scored: false, bindTid: 0 };
+    var bindTid = parseInt(D.settings['omr_tpl_bind_' + pid] || '0', 10) || 0;
+    ctx.bindTid = bindTid;
+    var tpl = bindTid > 0 ? D.omrTpl.find(function (t) { return t.id === bindTid && parseInt(t.project_id, 10) === pid; }) : null;
+    var lay = tpl ? (function () { try { return JSON.parse(tpl.layout || 'null'); } catch (e) { return null; } })() : null;
+    (lay && lay.sections ? lay.sections : []).forEach(function (sec) {
+        if (!sec) return;
+        var k = String(sec.kind || 'single');
+        if (k === 'blank' || k === 'short') return;
+        var start = parseInt(sec.start, 10) || 1, count = Math.min(500, Math.max(1, parseInt(sec.count, 10) || 0));
+        ctx.secs.push({ title: String(sec.title || ''), start: start, count: count, kind: k === 'multi' ? 'multi' : 'single', opts: Math.max(2, Math.min(6, parseInt(sec.opts, 10) || 4)) });
+        var key = sec.key && typeof sec.key === 'object' ? sec.key : {};
+        var pts = needPts && sec.points && typeof sec.points === 'object' ? sec.points : {};
+        for (var q = start; q < start + count; q++) {
+            var qk = String(q);
+            ctx.kind[qk] = k === 'multi' ? 'multi' : 'single';
+            ctx.opts[qk] = Math.max(2, Math.min(6, parseInt(sec.opts, 10) || 4));
+            var v = String(key[qk] || '').replace(/[^A-Ea-e]/g, '').toUpperCase();
+            if (v !== '') ctx.key[qk] = v;
+            var pv = parseFloat(String(pts[qk] || 0));
+            if (needPts && pv > 0 && pv <= 100) { ctx.pts[qk] = pv; ctx.scored = true; }
+        }
+    });
+    var arow = D.omrAns.find(function (a) { return parseInt(a.project_id, 10) === pid; });
+    if (arow) {
+        var savedTid = String(D.settings['omr_answers_tid_' + pid] === undefined ? '' : D.settings['omr_answers_tid_' + pid]);
+        if (savedTid === '' || parseInt(savedTid, 10) === bindTid) {
+            var dec = (function () { try { return JSON.parse(arow.answers || 'null'); } catch (e) { return null; } })();
+            if (dec) Object.keys(dec).forEach(function (q) {
+                var qk = String(q).replace(/[^0-9]/g, '');
+                var vv = String(dec[q] || '').replace(/[^A-E]/g, '').toUpperCase();
+                if (qk !== '' && vv !== '' && !ctx.key[qk]) ctx.key[qk] = vv;
+            });
+        }
+    }
+    return ctx;
+}
+function omrAgg(set) {   // 一组 {g,t} → 指标（优秀≥80/及格≥60/低分<30/满分≥99.95/零分≤0.05）
+    var n = 0, sg = 0, st = 0, maxg = null, ming = null, ex = 0, pa = 0, low = 0, full = 0, zero = 0;
+    Object.keys(set).forEach(function (k) {
+        var r = set[k];
+        if (!r || r.t <= 0) return;
+        n++; sg += r.g; st += r.t;
+        var rate = r.g / r.t * 100;
+        if (maxg === null || r.g > maxg) maxg = r.g;
+        if (ming === null || r.g < ming) ming = r.g;
+        if (rate >= 80) ex++;
+        if (rate >= 60) pa++;
+        if (rate < 30) low++;
+        if (rate >= 99.95) full++;
+        if (rate <= 0.05) zero++;
+    });
+    if (!n) return null;
+    return { n: n, avg: omn(sg / n), rate: st > 0 ? Math.round(sg / st * 1000) / 10 : 0,
+        max: omn(maxg), min: omn(ming),
+        ex: Math.round(ex / n * 1000) / 10, pa: Math.round(pa / n * 1000) / 10, low: Math.round(low / n * 1000) / 10,
+        full: full, zero: zero };
+}
+// 项目覆盖班级的学生（未禁用，class_id 升序 + 座号 + id）
+function projectStudents(clsIds) {
+    var map = {};
+    D.classes.forEach(function (c) { if (!c.deleted_at && clsIds.indexOf(c.id) >= 0) map[c.id] = c.name; });
+    var stus = {};
+    D.students.filter(function (s) { return clsIds.indexOf(s.class_id) >= 0 && s.disabled != 1; })
+        .sort(function (a, b) { return a.class_id - b.class_id || seatCmp(a, b); })
+        .forEach(function (s) {
+            stus[s.id] = { id: s.id, name: String(s.name || ''), seat_no: String(s.seat_no || ''), student_no: String(s.student_no || ''),
+                class_id: s.class_id, class_name: map[s.class_id] || ('班级#' + s.class_id) };
+        });
+    return { classes: map, students: stus };
+}
+
+// ===== 单项目视图计算（口径逐条对照原版） =====
+function computeProject(project) {
+    var pid = parseInt(project.id, 10);
+    var is_daily = project.mode === 'daily', is_omr = project.mode === 'omr';
+    var is_quiz = project.mode === 'quiz' || project.mode === 'raise';
+    var V = { p: project, pid: pid, is_daily: is_daily, is_omr: is_omr, is_quiz: is_quiz };
+
+    if (is_omr) {
+        var rounds = roundsOf(pid);
+        V.omr_rounds = rounds;
+        var pc = projectClassIds(project);
+        if (pc.indexOf(CLASS_ID) < 0) pc.push(CLASS_ID);
+        var clsIds = []; pc.forEach(function (c) { if (clsIds.indexOf(c) < 0) clsIds.push(c); });
+        V.omr_cls_ids = clsIds;
+        var ps = projectStudents(clsIds);
+        V.omr_classes = ps.classes; V.omr_students = ps.students;
+        // 识别结果（每生每题次最新一条）
+        var rows = {};
+        D.omr.filter(function (o) { return parseInt(o.project_id, 10) === pid && o.student_id != null && ps.students[o.student_id]; })
+            .sort(function (a, b) { return a.id - b.id; })
+            .forEach(function (o) {
+                var ans = (function () { try { return JSON.parse(o.answers || 'null'); } catch (e) { return null; } })() || {};
+                var st = parseScore(o.score);
+                rows[o.round_no] = rows[o.round_no] || {};
+                rows[o.round_no][o.student_id] = { answers: ans, g: st.g, t: st.t };
+            });
+        V.omr_rows = rows;
+        V.ctx = omrAnswerCtx(pid, false);
+        // 多次汇总
+        V.omr_round_stats = rounds.map(function (r) { return { no: r.no, title: r.title, agg: omrAgg(rows[r.no] || {}) }; });
+        // 单次选择
+        var nos = rounds.map(function (r) { return r.no; });
+        var selRound = GET_ROUND;
+        if (nos.indexOf(selRound) < 0) selRound = nos.length ? nos[nos.length - 1] : 0;
+        V.omr_sel_round = selRound;
+        var selCls = GET_OMR_CLS;
+        if (clsIds.indexOf(selCls) < 0 || !V.omr_classes[selCls]) selCls = clsIds.indexOf(CLASS_ID) >= 0 ? CLASS_ID : (clsIds[0] || 0);
+        V.omr_sel_cls = selCls;
+        // 班级单次对比
+        var selRows = selRound > 0 ? (rows[selRound] || {}) : {};
+        var allAgg = omrAgg(selRows);
+        V.omr_all_agg = allAgg;
+        var allRate = allAgg ? allAgg.rate : 0;
+        V.omr_cls_stats = [];
+        clsIds.forEach(function (cid) {
+            if (!V.omr_classes[cid]) return;
+            var sub = {};
+            Object.keys(selRows).forEach(function (sid) { if (V.omr_students[sid].class_id == cid) sub[sid] = selRows[sid]; });
+            var a = omrAgg(sub);
+            if (!a) return;
+            a.name = V.omr_classes[cid];
+            a.over = allRate > 0 ? Math.round((a.rate - allRate) / allRate * 1000) / 10 : null;
+            V.omr_cls_stats.push(a);
+        });
+        // 学生个人成绩
+        var stuRate = {}, clsAvg = {};
+        Object.keys(V.omr_students).forEach(function (sid) {
+            var g = 0, t = 0;
+            rounds.forEach(function (r) {
+                var row = (rows[r.no] || {})[sid];
+                if (row && row.t > 0) { g += row.g; t += row.t; }
+            });
+            if (t > 0) stuRate[sid] = Math.round(g / t * 1000) / 10;
+        });
+        Object.keys(stuRate).forEach(function (sid) {
+            var cid = V.omr_students[sid].class_id;
+            (clsAvg[cid] = clsAvg[cid] || []).push(stuRate[sid]);
+        });
+        Object.keys(clsAvg).forEach(function (cid) {
+            var arr = clsAvg[cid];
+            clsAvg[cid] = arr.length ? Math.round(arr.reduce(function (a, b) { return a + b; }, 0) / arr.length * 10) / 10 : 0;
+        });
+        var bycls = {};
+        Object.keys(stuRate).forEach(function (sid) { (bycls[V.omr_students[sid].class_id] = bycls[V.omr_students[sid].class_id] || []).push([parseInt(sid, 10), stuRate[sid]]); });
+        var clsRank = {};
+        Object.keys(bycls).forEach(function (cid) { clsRank[cid] = rankDesc(bycls[cid]); });
+        V.omr_stu_stats = [];
+        Object.keys(V.omr_students).forEach(function (sid) {
+            var rate = stuRate[sid];
+            if (rate === null || rate === undefined) return;
+            var cells = rounds.map(function (r) {
+                var row = (rows[r.no] || {})[sid];
+                return (row && row.t > 0) ? { rate: Math.round(row.g / row.t * 1000) / 10, score: omn(row.g) + '/' + omn(row.t) } : null;
+            });
+            var s = V.omr_students[sid], cavg = clsAvg[s.class_id] || 0;
+            V.omr_stu_stats.push({ s: s, cells: cells, rate: rate,
+                grade: rate >= 80 ? 'A' : (rate >= 70 ? 'B' : (rate >= 60 ? 'C' : 'D')),
+                rank: clsRank[s.class_id] ? (clsRank[s.class_id][sid] || null) : null,
+                over: cavg > 0 ? Math.round((rate - cavg) / cavg * 1000) / 10 : null });
+        });
+        // 逐题分析（单次·选定班级）
+        V.omr_qs = [];
+        if (selRound > 0) {
+            var roundRows = {};
+            Object.keys(selRows).forEach(function (sid) { if (V.omr_students[sid].class_id == selCls) roundRows[sid] = selRows[sid]; });
+            var nStu = Object.keys(roundRows).length;
+            V.ctx.secs.forEach(function (sec) {
+                for (var q = sec.start; q < sec.start + sec.count; q++) {
+                    var qk = String(q);
+                    var dist = { A: 0, B: 0, C: 0, D: 0, E: 0 }, correct = 0, answered = 0;
+                    var key = V.ctx.key[qk] || '';
+                    Object.keys(roundRows).forEach(function (sid) {
+                        var r = roundRows[sid];
+                        var sel = String(r.answers[qk] || '').replace(/[^A-E]/g, '').toUpperCase();
+                        if (sel === '') return;
+                        answered++;
+                        sel.split('').forEach(function (ch) { if (dist[ch] !== undefined) dist[ch]++; });
+                        if (key === '') return;
+                        var ok = (V.ctx.kind[qk] === 'multi') ? (sel.split('').every(function (c) { return key.indexOf(c) >= 0; })) : (sel === key);
+                        if (ok) correct++;
+                    });
+                    V.omr_qs.push({ no: q, kind: V.ctx.kind[qk] || sec.kind, sec: sec.title, key: key, opts: sec.opts, n: nStu, answered: answered, correct: correct, dist: dist });
+                }
+            });
+        }
+        // 图表数据
+        var cl = [], cr = [], ce = [], cp = [], cw = [];
+        V.omr_round_stats.forEach(function (rs) {
+            if (!rs.agg) return;
+            cl.push('第' + rs.no + '次' + (rs.title !== '' ? '·' + rs.title : ''));
+            cr.push(rs.agg.rate); ce.push(rs.agg.ex); cp.push(rs.agg.pa); cw.push(rs.agg.low);
+        });
+        CHART_SETS.orate = '各次平均得分率（%）'; CHART_DATA.orate = { labels: cl, values: cr };
+        CHART_SETS.oex = '各次优秀率（≥80%，%）'; CHART_DATA.oex = { labels: cl, values: ce };
+        CHART_SETS.opass = '各次及格率（≥60%，%）'; CHART_DATA.opass = { labels: cl, values: cp };
+        CHART_SETS.olow = '各次低分率（<30%，%）'; CHART_DATA.olow = { labels: cl, values: cw };
+        CHART_SETS.oq = '单次逐题正确率（%）';
+        CHART_DATA.oq = { labels: V.omr_qs.map(function (q) { return String(q.no); }), values: V.omr_qs.map(function (q) { return q.n > 0 ? Math.round(q.correct / q.n * 1000) / 10 : 0; }) };
+        var omrTimes = 0;
+        Object.keys(rows).forEach(function (rn) { omrTimes += Object.keys(rows[rn]).length; });
+        V.omr_times = omrTimes;
+        V.omr_parts = Object.keys(stuRate).length;
+        var allRows = [];
+        Object.keys(rows).forEach(function (rn) { Object.keys(rows[rn]).forEach(function (sid) { allRows.push(rows[rn][sid]); }); });
+        V.omr_total_agg = omrAgg(allRows);
+    } else if (is_quiz) {
+        var qrounds = roundsOf(pid);
+        V.qz_rounds = qrounds;
+        var qpc = projectClassIds(project);
+        if (qpc.indexOf(CLASS_ID) < 0) qpc.push(CLASS_ID);
+        var qclsIds = []; qpc.forEach(function (c) { if (qclsIds.indexOf(c) < 0) qclsIds.push(c); });
+        V.qz_cls_ids = qclsIds;
+        var qps = projectStudents(qclsIds);
+        V.qz_classes = qps.classes; V.qz_students = qps.students;
+        // 举牌登记（每生每次选项）
+        var qz_opts = {};
+        D.rr.filter(function (r) { return parseInt(r.project_id, 10) === pid && r.registered_at && V.qz_students[r.student_id]; })
+            .forEach(function (r) {
+                var opt = String(r.eval_value || '').trim().toUpperCase();
+                if (['A', 'B', 'C', 'D'].indexOf(opt) < 0) return;
+                (qz_opts[r.round_no] = qz_opts[r.round_no] || {})[r.student_id] = opt;
+            });
+        V.qz_opts = qz_opts;
+        // 各次正确答案
+        var qz_correct = {};
+        qrounds.forEach(function (r) {
+            var arr = [];
+            var pr = D.rounds.find(function (x) { return parseInt(x.project_id, 10) === pid && x.round_no === r.no; });
+            if (pr && pr.correct_opts) {
+                String(pr.correct_opts).toUpperCase().split(',').forEach(function (co) {
+                    co = co.trim();
+                    if (['A', 'B', 'C', 'D'].indexOf(co) >= 0 && arr.indexOf(co) < 0) arr.push(co);
+                });
+                arr.sort();
+            }
+            qz_correct[r.no] = arr;
+        });
+        V.qz_correct = qz_correct;
+        // 各次统计
+        V.qz_round_stats = qrounds.map(function (r) {
+            var rn = r.no, opts = qz_opts[rn] || {};
+            var dist = { A: 0, B: 0, C: 0, D: 0 };
+            Object.keys(opts).forEach(function (sid) { dist[opts[sid]]++; });
+            var answered = Object.keys(opts).length, crt = 0;
+            if (qz_correct[rn].length) Object.keys(opts).forEach(function (sid) { if (qz_correct[rn].indexOf(opts[sid]) >= 0) crt++; });
+            return { no: rn, title: r.title, dist: dist, answered: answered, crt: crt, has_key: qz_correct[rn].length > 0,
+                rate: answered > 0 ? Math.round(crt / answered * 1000) / 10 : 0 };
+        });
+        // 班级对比（每次：全体行 + 各班行）
+        V.qz_cls_stats = [];
+        qrounds.forEach(function (r) {
+            var rn = r.no, opts = qz_opts[rn] || {};
+            var hasKey = qz_correct[rn].length > 0;
+            var allN = Object.keys(opts).length, allCrt = 0;
+            if (hasKey) Object.keys(opts).forEach(function (sid) { if (qz_correct[rn].indexOf(opts[sid]) >= 0) allCrt++; });
+            var allRate = allN > 0 ? Math.round(allCrt / allN * 1000) / 10 : 0;
+            var rows = [];
+            qclsIds.forEach(function (cid) {
+                if (!V.qz_classes[cid]) return;
+                var n = 0, c = 0;
+                Object.keys(opts).forEach(function (sid) {
+                    if (V.qz_students[sid].class_id != cid) return;
+                    n++;
+                    if (hasKey && qz_correct[rn].indexOf(opts[sid]) >= 0) c++;
+                });
+                if (!n) return;
+                var rate = Math.round(c / n * 1000) / 10;
+                rows.push({ name: V.qz_classes[cid], n: n, crt: c, rate: rate, over: (hasKey && allRate > 0 ? Math.round((rate - allRate) / allRate * 1000) / 10 : null) });
+            });
+            if (rows.length) V.qz_cls_stats.push({ no: rn, title: r.title, has_key: hasKey, all_n: allN, all_crt: allCrt, all_rate: allRate, rows: rows });
+        });
+        // 学生个人
+        var qstu = {}, qrate = {}, qavg = {};
+        Object.keys(V.qz_students).forEach(function (sid) {
+            var cells = [], ans = 0, crt = 0;
+            qrounds.forEach(function (r) {
+                var rn = r.no;
+                var opt = (qz_opts[rn] || {})[sid] || null;
+                var hasKey = qz_correct[rn].length > 0;
+                var ok = (opt !== null && hasKey) ? (qz_correct[rn].indexOf(opt) >= 0) : null;
+                if (opt !== null) { ans++; if (ok) crt++; }
+                cells.push({ opt: opt, ok: ok, has_key: hasKey });
+            });
+            if (!ans) return;
+            var rate = Math.round(crt / ans * 1000) / 10;
+            qrate[sid] = rate;
+            qstu[sid] = { s: V.qz_students[sid], cells: cells, ans: ans, crt: crt, rate: rate };
+        });
+        Object.keys(qrate).forEach(function (sid) { (qavg[V.qz_students[sid].class_id] = qavg[V.qz_students[sid].class_id] || []).push(qrate[sid]); });
+        Object.keys(qavg).forEach(function (cid) {
+            var arr = qavg[cid];
+            qavg[cid] = arr.length ? Math.round(arr.reduce(function (a, b) { return a + b; }, 0) / arr.length * 10) / 10 : 0;
+        });
+        var qbycls = {};
+        Object.keys(qrate).forEach(function (sid) { (qbycls[V.qz_students[sid].class_id] = qbycls[V.qz_students[sid].class_id] || []).push([parseInt(sid, 10), qrate[sid]]); });
+        var qrank = {};
+        Object.keys(qbycls).forEach(function (cid) { qrank[cid] = rankDesc(qbycls[cid]); });
+        V.qz_stu_stats = qstu; V.qz_cls_avg = qavg; V.qz_cls_rank = qrank;
+        V.qz_parts = Object.keys(qrate).length;
+        var sumAns = 0, sumCrt = 0;
+        V.qz_round_stats.forEach(function (rs) { sumAns += rs.answered; sumCrt += rs.crt; });
+        V.qz_sum_ans = sumAns;
+        V.qz_all_rate = sumAns > 0 ? Math.round(sumCrt / sumAns * 1000) / 10 : 0;
+        // 单次选择
+        var qnos = qrounds.map(function (r) { return r.no; });
+        var qsel = GET_ROUND;
+        if (qnos.indexOf(qsel) < 0) qsel = qnos.length ? qnos[qnos.length - 1] : 0;
+        V.qz_sel_round = qsel;
+        var qselCls = GET_QCLS;
+        if (qclsIds.indexOf(qselCls) < 0 || !V.qz_classes[qselCls]) qselCls = qclsIds.indexOf(CLASS_ID) >= 0 ? CLASS_ID : (qclsIds[0] || 0);
+        V.qz_sel_cls = qselCls;
+        // 所选题次 × 所选班级的选项分布
+        var sdist = { A: 0, B: 0, C: 0, D: 0 }, sn = 0, scrt = 0;
+        var skey = qz_correct[qsel] || [];
+        Object.keys(qz_opts[qsel] || {}).forEach(function (sid) {
+            if (V.qz_students[sid].class_id != qselCls) return;
+            var opt = qz_opts[qsel][sid];
+            sdist[opt]++; sn++;
+            if (skey.length && skey.indexOf(opt) >= 0) scrt++;
+        });
+        V.qz_sel_dist = sdist; V.qz_sel_n = sn; V.qz_sel_crt = scrt; V.qz_sel_key = skey;
+    }
+
+    // 本班学生 + 本项目状态（含打卡天数 / 最近打卡）
+    var rdByStu = {};
+    D.record_days.filter(function (r) { return parseInt(r.project_id, 10) === pid; }).forEach(function (r) {
+        var o = rdByStu[r.student_id] = rdByStu[r.student_id] || { days: 0, last: '' };
+        o.days++;
+        if (String(r.reg_date) > o.last) o.last = String(r.reg_date);
+    });
+    V.stu_rows = D.students.filter(function (s) { return s.class_id == CLASS_ID; }).sort(seatCmp)
+        .map(function (s) {
+            var rec = (D.recMap[pid] || {})[s.id] || null;
+            var rd = rdByStu[s.id] || { days: 0, last: '' };
+            return { s: s, registered: rec ? rec.registered : 0, registered_at: rec ? rec.registered_at : null,
+                eval_value: rec ? rec.eval_value : null, rdays: rd.days, last_day: rd.last };
+        });
+    // 每日打卡统计
+    V.daily_rows = []; V.dsum = { days: 0, times: 0, studs: 0 };
+    if (is_daily) {
+        var byDate = {}, studs = {}, times = 0;
+        D.record_days.filter(function (r) { return parseInt(r.project_id, 10) === pid; }).forEach(function (r) {
+            var d = String(r.reg_date);
+            byDate[d] = (byDate[d] || 0) + 1; times++;
+            studs[r.student_id] = 1;
+        });
+        Object.keys(byDate).sort().forEach(function (d) { V.daily_rows.push({ date: d, cnt: byDate[d] }); });
+        V.dsum = { days: V.daily_rows.length, times: times, studs: Object.keys(studs).length };
+        var dLabels = [], dValues = [];
+        V.stu_rows.forEach(function (s) { if (s.rdays > 0) { dLabels.push(s.s.name); dValues.push(s.rdays); } });
+        var pairs = dLabels.map(function (l, i) { return [l, dValues[i], i]; });
+        pairs.sort(function (a, b) { return b[1] - a[1]; });
+        CHART_SETS.daily = '每日打卡人数（人）';
+        CHART_DATA.daily = { labels: V.daily_rows.map(function (r) { return r.date; }), values: V.daily_rows.map(function (r) { return r.cnt; }) };
+        CHART_SETS.sdays = '每生打卡天数（天）';
+        CHART_DATA.sdays = { labels: pairs.map(function (p) { return p[0]; }), values: pairs.map(function (p) { return p[1]; }) };
+    } else {
+        CHART_SETS.reg = '登记状态分布（人）';
+        var regc = 0;
+        V.stu_rows.forEach(function (s) { if (s.registered == 1) regc++; });
+        CHART_DATA.reg = { labels: ['已登记', '未登记'], values: [regc, V.stu_rows.length - regc] };
+    }
+    CHART_SETS.eval = '评价分布（人次）';
+    // 本项目评价分布
+    var evC = {};
+    D.records.filter(function (r) { return parseInt(r.project_id, 10) === pid && r.eval_value; }).forEach(function (r) {
+        evC[r.eval_value] = (evC[r.eval_value] || 0) + 1;
+    });
+    V.proj_eval = Object.keys(evC).map(function (v) { return { v: v, cnt: evC[v] }; })
+        .sort(function (a, b) { return b.cnt - a.cnt; });
+    CHART_DATA.eval = { labels: V.proj_eval.map(function (i) { return i.v; }), values: V.proj_eval.map(function (i) { return i.cnt; }) };
+
+    // 登记矩阵（每次×学生）
+    V.MX = null;
+    var pmode = String(project.mode || 'count');
+    if (is_daily || ['multi', 'quiz', 'raise', 'omr'].indexOf(pmode) >= 0) {
+        var mxLabel = is_daily ? '日期' : (pmode === 'multi' ? '项次' : '题次');
+        var mxRows = [], mxCels = {}, mxInfo = {};
+        if (is_daily) {
+            var md = {};
+            D.record_days.filter(function (r) { return parseInt(r.project_id, 10) === pid; }).forEach(function (r) {
+                (md[String(r.reg_date)] = md[String(r.reg_date)] || {})[r.student_id] = { at: String(r.created_at || ''), ev: String(r.eval_value || '') };
+            });
+            V.daily_rows.forEach(function (r) {
+                var d = String(r.date);
+                mxRows.push({ label: d, sub: r.cnt + ' 人打卡' });
+                V.stu_rows.forEach(function (s) {
+                    var sid = s.s.id, hit = md[d] && md[d][sid];
+                    (mxCels[sid] = mxCels[sid] || []).push(hit ? { t: '√', c: 'ok' } : null);
+                    (mxInfo[sid] = mxInfo[sid] || []).push(hit ? ('打卡时间 ' + md[d][sid].at + (md[d][sid].ev !== '' ? '；评价 ' + md[d][sid].ev : '')) : '');
+                });
+            });
+        } else if (pmode === 'multi') {
+            var md2 = {};
+            D.rr.filter(function (r) { return parseInt(r.project_id, 10) === pid && r.registered_at; }).forEach(function (r) {
+                (md2[r.round_no] = md2[r.round_no] || {})[r.student_id] = { at: String(r.registered_at || ''), ev: String(r.eval_value || '') };
+            });
+            qroundsOfMulti(pid).forEach(function (rn) {
+                var n = 0;
+                V.stu_rows.forEach(function (s) { if (md2[rn] && md2[rn][s.s.id]) n++; });
+                var t = (D.roundTitles[pid] || {})[rn] || '';
+                mxRows.push({ label: '第 ' + rn + ' ' + mxLabel + (t !== '' ? '：' + t : ''), sub: n + ' 人登记' });
+                V.stu_rows.forEach(function (s) {
+                    var sid = s.s.id, hit = md2[rn] && md2[rn][sid];
+                    (mxCels[sid] = mxCels[sid] || []).push(hit ? { t: '√', c: 'ok' } : null);
+                    (mxInfo[sid] = mxInfo[sid] || []).push(hit ? ('登记时间 ' + md2[rn][sid].at + (md2[rn][sid].ev !== '' ? '；评价 ' + md2[rn][sid].ev : '')) : '');
+                });
+            });
+        } else if (is_quiz) {
+            qroundsOfMulti(pid).forEach(function (rn) {
+                var r = qrounds.filter(function (x) { return x.no === rn; })[0] || { title: '' };
+                var key = qz_correct[rn] || [];
+                var n = 0;
+                V.stu_rows.forEach(function (s) { if ((qz_opts[rn] || {})[s.s.id]) n++; });
+                mxRows.push({ label: '第 ' + rn + ' ' + mxLabel + (r.title !== '' ? '：' + r.title : ''),
+                    sub: n + ' 人答题' + (key.length ? '（答案 ' + key.join('') + '）' : '') });
+                V.stu_rows.forEach(function (s) {
+                    var sid = s.s.id, opt = (qz_opts[rn] || {})[sid] || null;
+                    if (opt === null) { (mxCels[sid] = mxCels[sid] || []).push(null); (mxInfo[sid] = mxInfo[sid] || []).push(''); }
+                    else {
+                        var ok = key.length ? (key.indexOf(opt) >= 0 ? 1 : 0) : -1;
+                        (mxCels[sid] = mxCels[sid] || []).push({ t: opt, c: ok === 1 ? 'ok' : (ok === 0 ? 'bad' : 'mid') });
+                        (mxInfo[sid] = mxInfo[sid] || []).push('选 ' + opt + (ok === 1 ? '（答对）' : (ok === 0 ? '（答错，答案 ' + key.join('') + '）' : '（未设答案）')));
+                    }
+                });
+            });
+        } else if (is_omr) {
+            rounds.forEach(function (r) {
+                var rn = r.no, n = 0;
+                V.stu_rows.forEach(function (s) {
+                    var o = (rows[rn] || {})[s.s.id];
+                    if (o && o.t > 0) n++;
+                });
+                mxRows.push({ label: '第 ' + rn + ' ' + mxLabel + (r.title !== '' ? '：' + r.title : ''), sub: n + ' 人有成绩' });
+                V.stu_rows.forEach(function (s) {
+                    var sid = s.s.id, o = (rows[rn] || {})[sid];
+                    if (!o || o.t <= 0) { (mxCels[sid] = mxCels[sid] || []).push(null); (mxInfo[sid] = mxInfo[sid] || []).push(o ? '已识别但无批改成绩' : ''); }
+                    else {
+                        var rate = o.g / o.t * 100;
+                        (mxCels[sid] = mxCels[sid] || []).push({ t: omn(o.g) + '/' + omn(o.t), c: rate >= 60 ? 'ok' : 'bad' });
+                        (mxInfo[sid] = mxInfo[sid] || []).push('得分 ' + omn(o.g) + ' / 满分 ' + omn(o.t) + '（' + (Math.round(rate * 10) / 10) + '%）');
+                    }
+                });
+            });
+        }
+        var mxStudents = {};
+        V.stu_rows.forEach(function (s) {
+            var sid = s.s.id, cells = mxCels[sid] || [], cnt = 0;
+            cells.forEach(function (c) { if (c !== null) cnt++; });
+            mxStudents[sid] = { name: String(s.s.name || ''), seat: String(s.s.seat_no || ''), no: String(s.s.student_no || ''), cells: cells, info: mxInfo[sid] || [], cnt: cnt };
+        });
+        V.MX = { label: mxLabel, rows: mxRows, students: mxStudents };
+    }
+    return V;
+}
+// multi 模式轮次（roundsOf 的 no 列表）
+function qroundsOfMulti(pid) { return roundsOf(pid).map(function (r) { return r.no; }); }
+// 项目轮次标题映射（渲染前填充）
+D.roundTitles = {};
+
+// ===== 学生视图计算 =====
+function computeStudent(student) {
+    var sid = parseInt(student.id, 10);
+    var V = { student: student, per: [], sum: { reg: 0, eval: 0, days: 0 } };
+    D.projectsC.forEach(function (p) {
+        var pid = parseInt(p.id, 10);
+        if (p.mode === 'omr') {
+            var oscores = {};
+            D.omr.filter(function (o) { return parseInt(o.project_id, 10) === pid && o.student_id == sid; })
+                .forEach(function (o) { oscores[o.round_no] = String(o.score || ''); });
+            var parts = [];
+            roundsOf(pid).forEach(function (r) {
+                if (oscores[r.no] && oscores[r.no] !== '') parts.push('第' + r.no + '次 ' + oscores[r.no]);
+            });
+            V.per.push({ p: p, rec: null, days: 0, last: '', is_reg: false, evaled: false, omr: true, omr_text: parts.join('；') });
+            return;
+        }
+        var rec = (D.recMap[pid] || {})[sid] || null;
+        var days = 0, last = '';
+        if (p.mode === 'daily') {
+            D.record_days.filter(function (r) { return parseInt(r.project_id, 10) === pid && r.student_id == sid; }).forEach(function (r) {
+                days++;
+                if (String(r.reg_date) > last) last = String(r.reg_date);
+            });
+            V.sum.days += days;
+        }
+        var is_reg = rec && rec.registered == 1;
+        if (is_reg) V.sum.reg++;
+        var evaled = rec && rec.eval_value !== null && rec.eval_value !== '' && rec.eval_value !== undefined;
+        if (evaled) V.sum.eval++;
+        V.per.push({ p: p, rec: rec, days: days, last: last, is_reg: is_reg, evaled: evaled });
+    });
+    var l = [], v = [];
+    V.per.forEach(function (row) { if (row.days > 0) { l.push(row.p.name); v.push(row.days); } });
+    CHART_SETS.sdays = '各项目打卡天数（天）'; CHART_DATA.sdays = { labels: l, values: v };
+    CHART_SETS.sreg = '登记状态分布（项目）';
+    CHART_DATA.sreg = { labels: ['已登记', '未登记'], values: [V.sum.reg, D.projectsC.length - V.sum.reg] };
+    return V;
+}
+// ===== 班级总览视图计算 =====
+var EVAL = {};   // 评价分布二级项目选择（仅班级总览）
+var NAV_ONLY_PROJ = false;
+var QS_CLASS_ID = CLASS_ID;   // 原始 GET class_id（nav_only_proj 判定用）
+function computeClass() {
+    var V = {};
+    V.total = D.students.filter(function (s) { return s.class_id == CLASS_ID; }).length;
+    V.projects = D.projects.filter(function (p) { return !p.deleted_at && parseInt(p.class_id, 10) === CLASS_ID; })
+        .sort(function (a, b) { return b.id - a.id; });
+    V.projects.forEach(function (p) {
+        var pid = parseInt(p.id, 10);
+        var regc = 0, evalc = 0;
+        D.records.forEach(function (r) {
+            if (parseInt(r.project_id, 10) !== pid) return;
+            if (r.registered == 1) regc++;
+            if (r.eval_value !== null && r.eval_value !== undefined && r.eval_value !== '') evalc++;
+        });
+        p.registered_count = regc; p.evaluated_count = evalc;
+    });
+    V.daily_agg = {};
+    V.projects.forEach(function (p) {
+        var pid = parseInt(p.id, 10);
+        var dates = {}, times = 0, studs = {};
+        D.record_days.forEach(function (r) {
+            if (parseInt(r.project_id, 10) !== pid) return;
+            dates[String(r.reg_date)] = 1; times++; studs[r.student_id] = 1;
+        });
+        V.daily_agg[pid] = { days: Object.keys(dates).length, times: times, studs: Object.keys(studs).length };
+    });
+    V.omr_projects = D.projects.filter(function (p) {
+        return !p.deleted_at && p.mode === 'omr' && projectClassIds(p).indexOf(CLASS_ID) >= 0;
+    }).sort(function (a, b) { return b.id - a.id; });
+    V.omr_agg = {};
+    V.omr_projects.forEach(function (p) {
+        var pid = parseInt(p.id, 10);
+        var times = 0, studs = {};
+        D.omr.forEach(function (o) {
+            if (parseInt(o.project_id, 10) !== pid || o.student_id == null) return;
+            times++; studs[o.student_id] = 1;
+        });
+        var rounds = D.rounds.filter(function (r) { return parseInt(r.project_id, 10) === pid; }).length;
+        V.omr_agg[pid] = { times: times, studs: Object.keys(studs).length, rounds: rounds };
+    });
+    // 图表：各项目登记率 / 评价分布
+    var labels = [], values = [];
+    V.projects.forEach(function (p) {
+        labels.push(p.name);
+        if (p.mode === 'daily') {
+            var studs2 = (V.daily_agg[parseInt(p.id, 10)] || {}).studs || 0;
+            values.push(V.total > 0 ? Math.round(studs2 / V.total * 1000) / 10 : 0);
+        } else {
+            values.push(V.total > 0 ? Math.round((parseInt(p.registered_count, 10) || 0) / V.total * 1000) / 10 : 0);
+        }
+    });
+    CHART_SETS.rate = '各项目登记率（%）';
+    CHART_DATA.rate = { labels: labels, values: values };
+    CHART_SETS.eval = '评价分布（人次）';
+    EVAL = {};
+    V.projects.forEach(function (p) {
+        var pid = parseInt(p.id, 10), cnt = {};
+        D.records.forEach(function (r) {
+            if (parseInt(r.project_id, 10) !== pid) return;
+            if (r.eval_value !== null && r.eval_value !== undefined && r.eval_value !== '') cnt[r.eval_value] = (cnt[r.eval_value] || 0) + 1;
+        });
+        var items = Object.keys(cnt).map(function (v) { return { v: v, cnt: cnt[v] }; })
+            .sort(function (a, b) { return b.cnt - a.cnt; });
+        if (items.length) EVAL[pid] = { name: p.name, items: items };
+    });
+    return V;
+}
+
+// ===== 渲染：班级总览 =====
+function renderClass() {
+    var V = computeClass();
+    TOTAL_STUDENTS = V.total;
+    var emb = EMBED ? '&embed=1' : '';
+    var h = '<div class="stat-bar">'
+        + '<div class="stat-box"><div class="num">' + V.total + '</div><div class="label">全班人数</div></div>'
+        + '<div class="stat-box"><div class="num">' + V.projects.length + '</div><div class="label">项目总数</div></div></div>';
+    h += '<div class="panel"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+        + '<h3 style="margin:0;">各项目登记情况</h3><div style="flex:1;"></div>'
+        + '<span id="projSelTip" style="font-size:12px;color:#999;">未勾选项目</span>'
+        + '<button type="button" class="btn btn-sm btn-outline" onclick="exportProjects()">⬇ 批量导出所选项目</button>'
+        + '<button type="button" class="btn btn-sm" onclick="openModal(\'chartModal\');renderChart()">📊 统计图表</button></div>';
+    var dailyP = [], countP = [];
+    V.projects.forEach(function (p) {
+        if (p.mode === 'omr') return;
+        if (p.mode === 'daily') dailyP.push(p); else countP.push(p);
+    });
+    h += '<p style="font-weight:bold;margin:14px 0 6px;color:#667eea;">📅 打卡项目（' + dailyP.length + '）—— 一个项目多次使用，逐次打卡</p>'
+        + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+        + '<th><input type="checkbox" onchange="projAll(this)" title="全选/全不选" autocomplete="off"></th><th>项目名称</th><th>评价模式</th><th>打卡天数</th><th>打卡人次</th><th>打卡人数</th><th>已评价</th><th>操作</th><th>导出</th></tr></thead><tbody>';
+    dailyP.forEach(function (p) {
+        var pid = parseInt(p.id, 10), agg = V.daily_agg[pid] || {};
+        h += '<tr><td><input type="checkbox" class="proj-ck" value="' + pid + '" onchange="updateProjSel()" autocomplete="off"></td>'
+            + '<td>' + esc(p.name) + '</td><td>' + esc(p.eval_name || p.eval_mode) + '</td>'
+            + '<td style="color:#667eea;font-weight:bold;">' + (agg.days || 0) + '</td>'
+            + '<td>' + (agg.times || 0) + '</td>'
+            + '<td style="color:#27ae60;font-weight:bold;">' + (agg.studs || 0) + '</td>'
+            + '<td>' + p.evaluated_count + '</td>'
+            + '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">'
+            + '<a href="stats.html?class_id=' + CLASS_ID + '&project_id=' + pid + emb + '" class="btn btn-sm btn-outline" style="text-decoration:none;">📊 单项统计</a>'
+            + '<a href="project_view.html?project_id=' + pid + emb + '" class="btn btn-sm btn-outline" style="text-decoration:none;">查看详情</a></div></td>'
+            + '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">'
+            + '<button type="button" class="btn btn-sm btn-outline" onclick="expProject(' + pid + ')">⬇ 详细数据</button>'
+            + '<button type="button" class="btn btn-sm btn-outline" onclick="expProjectDaily(' + pid + ')">⬇ 每日明细</button></div></td></tr>';
+    });
+    if (!dailyP.length) h += '<tr><td colspan="9" style="text-align:center;color:#999;">暂无打卡项目</td></tr>';
+    h += '</tbody></table></div>';
+    h += '<p style="font-weight:bold;margin:18px 0 6px;color:#27ae60;">📌 一次性项目（' + countP.length + '）—— 一次登记即完成</p>'
+        + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+        + '<th><input type="checkbox" onchange="projAll(this)" title="全选/全不选" autocomplete="off"></th><th>项目名称</th><th>评价模式</th><th>已登记</th><th>未登记</th><th>登记率</th><th>已评价</th><th>操作</th><th>导出</th></tr></thead><tbody>';
+    countP.forEach(function (p) {
+        var pid = parseInt(p.id, 10);
+        var rate = V.total > 0 ? Math.round(p.registered_count / V.total * 100) : 0;
+        h += '<tr><td><input type="checkbox" class="proj-ck" value="' + pid + '" onchange="updateProjSel()" autocomplete="off"></td>'
+            + '<td>' + esc(p.name) + '</td><td>' + esc(p.eval_name || p.eval_mode) + '</td>'
+            + '<td style="color:#27ae60;font-weight:bold;">' + p.registered_count + '</td>'
+            + '<td style="color:#f39c12;">' + (V.total - p.registered_count) + '</td>'
+            + '<td><div style="display:flex;align-items:center;gap:8px;">'
+            + '<div style="flex:1;max-width:120px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+            + '<div style="width:' + rate + '%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);"></div></div>'
+            + '<span style="font-size:12px;color:#888;">' + rate + '%</span></div></td>'
+            + '<td>' + p.evaluated_count + '</td>'
+            + '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">'
+            + '<a href="stats.html?class_id=' + CLASS_ID + '&project_id=' + pid + emb + '" class="btn btn-sm btn-outline" style="text-decoration:none;">📊 单项统计</a>'
+            + '<a href="project_view.html?project_id=' + pid + emb + '" class="btn btn-sm btn-outline" style="text-decoration:none;">查看详情</a></div></td>'
+            + '<td><button type="button" class="btn btn-sm btn-outline" onclick="expProject(' + pid + ')">⬇ 详细数据</button></td></tr>';
+    });
+    if (!countP.length) h += '<tr><td colspan="9" style="text-align:center;color:#999;">暂无一次性项目</td></tr>';
+    h += '</tbody></table></div>';
+    if (V.omr_projects.length) {
+        h += '<p style="font-weight:bold;margin:18px 0 6px;color:#8e44ad;">🖼 答题卡项目（' + V.omr_projects.length + '）—— 涂卡识别判分，多题次统计</p>'
+            + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+            + '<th>项目名称</th><th>范围</th><th>题次数</th><th>识别人次</th><th>参与人数</th><th>操作</th><th>导出</th></tr></thead><tbody>';
+        V.omr_projects.forEach(function (p) {
+            var pid = parseInt(p.id, 10), oagg = V.omr_agg[pid] || { times: 0, studs: 0, rounds: 0 };
+            h += '<tr><td>' + esc(p.name) + '</td>'
+                + '<td><span class="badge badge-scope" style="background:#667eea;">' + esc(SCOPE_NAMES[p.scope] || p.scope) + '</span></td>'
+                + '<td style="color:#667eea;font-weight:bold;">' + oagg.rounds + '</td>'
+                + '<td>' + oagg.times + '</td>'
+                + '<td style="color:#27ae60;font-weight:bold;">' + oagg.studs + '</td>'
+                + '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">'
+                + '<a href="stats.html?class_id=' + CLASS_ID + '&project_id=' + pid + emb + '" class="btn btn-sm btn-outline" style="text-decoration:none;">📊 统计报表</a>'
+                + '<a href="project_view.html?project_id=' + pid + emb + '" class="btn btn-sm btn-outline" style="text-decoration:none;">查看详情</a></div></td>'
+                + '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">'
+                + '<button type="button" class="btn btn-sm btn-outline" onclick="expOmrReport(' + pid + ')">⬇ 统计报表</button>'
+                + '<button type="button" class="btn btn-sm btn-outline" onclick="expOmrAnswers(' + pid + ')">⬇ 作答明细</button></div></td></tr>';
+        });
+        h += '</tbody></table></div>';
+    }
+    if (!V.projects.length && !V.omr_projects.length) h += '<p style="text-align:center;color:#999;">暂无项目</p>';
+    h += '</div>';
+    h += '<div class="panel"><h3>评价分布统计</h3>';
+    var evalKeys = Object.keys(EVAL);
+    if (!evalKeys.length) h += '<p style="color:#999;font-size:14px;">暂无评价数据</p>';
+    else evalKeys.forEach(function (k) {
+        h += '<p style="font-weight:500;margin:12px 0 8px;color:#555;">' + esc(EVAL[k].name) + '</p>'
+            + '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+        EVAL[k].items.forEach(function (it) {
+            h += '<div class="stat-box" style="min-width:100px;padding:12px;">'
+                + '<div class="num" style="font-size:22px;">' + esc(it.v) + '</div>'
+                + '<div class="label">' + it.cnt + ' 人次</div></div>';
+        });
+        h += '</div>';
+    });
+    h += '</div>';
+    document.getElementById('viewRoot').innerHTML = h;
+    document.title = '登记统计 - ' + CLASS.name;
+    fillChartModal();
+}
+
+// ===== 渲染：单项目统计 =====
+function renderProject() {
+    var V = PV, p = V.p;
+    var regc = 0, evalc = 0;
+    D.records.forEach(function (r) {
+        if (parseInt(r.project_id, 10) !== V.pid) return;
+        if (r.registered == 1) regc++;
+        if (r.eval_value !== null && r.eval_value !== undefined && r.eval_value !== '') evalc++;
+    });
+    MX_DATA = V.MX;
+    var h = '<div class="stat-bar">'
+        + '<div class="stat-box"><div class="num">' + TOTAL_STUDENTS + '</div><div class="label">全班人数' + hq('statBar') + '</div></div>';
+    if (V.is_omr) {
+        h += '<div class="stat-box"><div class="num">' + V.omr_parts + '</div><div class="label">参与人数（有成绩）' + hq('omrParts') + '</div></div>'
+            + '<div class="stat-box"><div class="num green">' + V.omr_times + '</div><div class="label">累计识别人次</div></div>'
+            + '<div class="stat-box"><div class="num">' + V.omr_rounds.length + '</div><div class="label">题次数</div></div>'
+            + '<div class="stat-box"><div class="num orange">' + (V.omr_total_agg ? V.omr_total_agg.rate : 0) + '%</div><div class="label">全项目平均得分率</div></div>';
+    } else if (V.is_quiz) {
+        h += '<div class="stat-box"><div class="num">' + V.qz_parts + '</div><div class="label">参与人数（有答题）' + hq('qzParts') + '</div></div>'
+            + '<div class="stat-box"><div class="num green">' + V.qz_sum_ans + '</div><div class="label">累计答题人次</div></div>'
+            + '<div class="stat-box"><div class="num">' + V.qz_rounds.length + '</div><div class="label">题次数</div></div>'
+            + '<div class="stat-box"><div class="num orange">' + V.qz_all_rate + '%</div><div class="label">全项目平均正确率</div></div>';
+    } else if (V.is_daily) {
+        h += '<div class="stat-box"><div class="num">' + V.dsum.days + '</div><div class="label">打卡天数</div></div>'
+            + '<div class="stat-box"><div class="num green">' + V.dsum.times + '</div><div class="label">累计打卡人次</div></div>'
+            + '<div class="stat-box"><div class="num">' + V.dsum.studs + '</div><div class="label">打卡人数（去重）</div></div>';
+    } else {
+        h += '<div class="stat-box"><div class="num green">' + regc + '</div><div class="label">已登记</div></div>'
+            + '<div class="stat-box"><div class="num orange">' + (TOTAL_STUDENTS - regc) + '</div><div class="label">未登记</div></div>';
+    }
+    if (!V.is_omr && !V.is_quiz) h += '<div class="stat-box"><div class="num">' + evalc + '</div><div class="label">已评价</div></div>';
+    h += '</div>';
+    var badgeTxt = V.is_omr ? '答题卡' : (V.is_daily ? '打卡' : (V.is_quiz ? (p.mode === 'raise' ? '举牌' : '答题') : '单次'));
+    var badgeStyle = V.is_omr ? 'background:#667eea;' : (V.is_quiz ? 'background:#e67e22;' : '');
+    h += '<div class="panel"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+        + '<h3 style="margin:0;">📊 ' + esc(p.name) + ' <span class="badge badge-count" style="' + badgeStyle + '">' + badgeTxt + '</span></h3>'
+        + '<span class="badge badge-scope" style="background:#667eea;">' + esc(SCOPE_NAMES[p.scope] || p.scope) + '</span>';
+    if (!V.is_omr) h += '<span style="color:#888;font-size:13px;">' + esc(p.eval_name || p.eval_mode) + '</span>';
+    h += '<div style="flex:1;"></div><button type="button" class="btn btn-sm" onclick="openModal(\'chartModal\');renderChart()">📊 统计图表</button></div></div>';
+
+    if (MX_DATA && MX_DATA.rows.length) {
+        h += '<style>'
+            + '.mx-table th, .mx-table td { border: 1px solid #e5e8f5; }'
+            + '.mx-table thead th { position: sticky; top: 0; background: #f7f8fc; z-index: 3; }'
+            + '.mx-table th:first-child, .mx-table td:first-child { position: sticky; left: 0; background: #fafbff; z-index: 2; text-align: left; }'
+            + '.mx-table thead th:first-child { z-index: 4; }'
+            + '.mx-name { display: block; padding: 8px 0; writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 3px; font-size: 12px; color: #4f7cff; text-decoration: none; font-weight: bold; max-height: 110px; overflow: hidden; }'
+            + '.mx-name:hover { color: #27ae60; }</style>';
+        h += '<div class="panel"><h3>📋 ' + (V.is_daily ? '每日打卡矩阵' : '登记矩阵') + '（每次 × 学生）' + hq('matrix') + '</h3>'
+            + '<div class="table-wrap" style="max-height:520px;overflow:auto;">'
+            + '<table class="data-table mx-table" style="border-collapse:collapse;font-size:12px;"><thead><tr>'
+            + '<th style="min-width:170px;">' + esc(MX_DATA.label) + ' / 学生</th>';
+        V.stu_rows.forEach(function (s) {
+            h += '<th style="padding:0;min-width:32px;width:32px;"><a class="mx-name" href="javascript:void(0)" onclick="openStuMatrix(' + s.s.id + ')" title="'
+                + escAttr(s.s.name) + '（座号 ' + escAttr(s.s.seat_no) + '），点击查看每次明细">' + esc(s.s.name) + '</a></th>';
+        });
+        h += '</tr></thead><tbody>';
+        MX_DATA.rows.forEach(function (mrow, ri) {
+            h += '<tr><td style="white-space:nowrap;font-size:12px;">' + esc(mrow.label) + '<span style="color:#999;">（' + esc(mrow.sub) + '）</span></td>';
+            V.stu_rows.forEach(function (s) {
+                var mc = (MX_DATA.students[s.s.id] ? MX_DATA.students[s.s.id].cells[ri] : null) || null;
+                h += '<td style="text-align:center;padding:4px 2px;font-weight:bold;'
+                    + (mc ? 'color:' + (mc.c === 'ok' ? '#27ae60' : (mc.c === 'bad' ? '#e74c3c' : '#888')) + ';' : 'color:#d5d9e8;') + '">'
+                    + (mc ? esc(mc.t) : '·') + '</td>';
+            });
+            h += '</tr>';
+        });
+        h += '<tr style="background:#f7f8fc;font-weight:bold;"><td>合计（完成' + esc(MX_DATA.label === '日期' ? '天数' : '次数') + '）</td>';
+        V.stu_rows.forEach(function (s) {
+            var mcnt = MX_DATA.students[s.s.id] ? MX_DATA.students[s.s.id].cnt : 0;
+            h += '<td style="text-align:center;padding:4px 2px;color:' + (mcnt > 0 ? '#4f7cff' : '#bbb') + ';">' + mcnt + '</td>';
+        });
+        h += '</tr></tbody></table></div>'
+            + '<p style="color:#999;font-size:12px;margin:8px 0 0;">备注：√=已登记/已打卡，字母=答题选项（绿=答对 / 红=答错 / 灰=未设答案），得分/满分（绿=≥60% / 红=&lt;60%），·=未登记；点击列头姓名查看该生每次明细。</p></div>';
+    }
+
+    if (V.is_omr) {
+        // —— 多次汇总 ——
+        h += '<div class="panel"><h3>📈 多次汇总（各次成绩总览' + hq('omrRound') + '）</h3>'
+            + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+            + '<th>次数</th><th>标题</th><th>参考人数</th><th>平均分</th><th>平均得分率</th><th>最高分</th><th>最低分</th><th>优秀率≥80%</th><th>及格率≥60%</th><th>低分率&lt;30%</th><th>满分</th><th>零分</th></tr></thead><tbody>';
+        V.omr_round_stats.forEach(function (rs) {
+            var a = rs.agg;
+            h += '<tr><td style="font-weight:bold;color:#667eea;">第 ' + rs.no + ' 次</td>'
+                + '<td>' + (rs.title !== '' ? esc(rs.title) : '—') + '</td>';
+            if (!a) h += '<td colspan="10" style="text-align:center;color:#999;">该次暂无已批改成绩</td>';
+            else {
+                h += '<td>' + a.n + '</td><td style="font-weight:bold;">' + a.avg + '</td>'
+                    + '<td><div style="display:flex;align-items:center;gap:8px;">'
+                    + '<div style="flex:1;max-width:120px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                    + '<div style="width:' + Math.min(100, a.rate) + '%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);"></div></div>'
+                    + '<span style="font-size:12px;color:#888;">' + a.rate + '%</span></div></td>'
+                    + '<td style="color:#27ae60;font-weight:bold;">' + a.max + '</td>'
+                    + '<td style="color:#e74c3c;font-weight:bold;">' + a.min + '</td>'
+                    + '<td style="color:#27ae60;font-weight:bold;">' + a.ex + '%</td>'
+                    + '<td style="color:#2980b9;font-weight:bold;">' + a.pa + '%</td>'
+                    + '<td style="color:#e74c3c;font-weight:bold;">' + a.low + '%</td>'
+                    + '<td>' + a.full + ' 人</td><td>' + a.zero + ' 人</td>';
+            }
+            h += '</tr>';
+        });
+        if (!V.omr_round_stats.length) h += '<tr><td colspan="12" style="text-align:center;color:#999;">暂无题次（在项目页顶部可新增题次）</td></tr>';
+        h += '</tbody></table></div></div>';
+        // —— 班级单次分析 ——
+        h += '<div class="panel"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+            + '<h3 style="margin:0;">🏫 班级单次分析</h3>'
+            + '<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">次数<select class="form-control" style="width:auto;padding:4px 8px;" onchange="omrJump(\'round\', this.value)">';
+        V.omr_rounds.forEach(function (r) {
+            h += '<option value="' + r.no + '"' + (r.no === V.omr_sel_round ? ' selected' : '') + '>第 ' + r.no + ' 次' + (r.title !== '' ? '·' + esc(r.title) : '') + '</option>';
+        });
+        h += '</select></label>';
+        if (V.omr_cls_ids.length > 1) {
+            h += '<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">班级（逐题分析）<select class="form-control" style="width:auto;padding:4px 8px;" onchange="omrJump(\'omr_cls\', this.value)">';
+            V.omr_cls_ids.forEach(function (cid) {
+                if (!V.omr_classes[cid]) return;
+                h += '<option value="' + cid + '"' + (cid === V.omr_sel_cls ? ' selected' : '') + '>' + esc(V.omr_classes[cid]) + '</option>';
+            });
+            h += '</select></label>';
+        }
+        h += '</div><p style="font-weight:bold;margin:14px 0 6px;color:#555;">各班对比（第 ' + V.omr_sel_round + ' 次）</p>'
+            + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+            + '<th>班级</th><th>参考人数</th><th>平均分</th><th>得分率</th><th>优秀率≥80%</th><th>及格率≥60%</th><th>低分率&lt;30%</th><th>超均率</th></tr></thead><tbody>';
+        V.omr_cls_stats.forEach(function (a) {
+            var overColor = a.over === null ? '#999' : (a.over >= 0 ? '#27ae60' : '#e74c3c');
+            h += '<tr><td style="font-weight:bold;">' + esc(a.name) + '</td><td>' + a.n + '</td><td style="font-weight:bold;">' + a.avg + '</td>'
+                + '<td><div style="display:flex;align-items:center;gap:8px;">'
+                + '<div style="flex:1;max-width:120px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                + '<div style="width:' + Math.min(100, a.rate) + '%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);"></div></div>'
+                + '<span style="font-size:12px;color:#888;">' + a.rate + '%</span></div></td>'
+                + '<td style="color:#27ae60;font-weight:bold;">' + a.ex + '%</td>'
+                + '<td style="color:#2980b9;font-weight:bold;">' + a.pa + '%</td>'
+                + '<td style="color:#e74c3c;font-weight:bold;">' + a.low + '%</td>'
+                + '<td style="color:' + overColor + ';font-weight:bold;">' + (a.over === null ? '—' : (a.over >= 0 ? '+' : '') + a.over + '%') + '</td></tr>';
+        });
+        if (V.omr_all_agg) {
+            h += '<tr style="background:#f6f7fd;"><td style="font-weight:bold;color:#667eea;">全体合计</td><td>' + V.omr_all_agg.n + '</td>'
+                + '<td style="font-weight:bold;">' + V.omr_all_agg.avg + '</td><td style="font-weight:bold;">' + V.omr_all_agg.rate + '%</td>'
+                + '<td style="color:#27ae60;font-weight:bold;">' + V.omr_all_agg.ex + '%</td>'
+                + '<td style="color:#2980b9;font-weight:bold;">' + V.omr_all_agg.pa + '%</td>'
+                + '<td style="color:#e74c3c;font-weight:bold;">' + V.omr_all_agg.low + '%</td><td>—</td></tr>';
+        }
+        if (!V.omr_cls_stats.length && !V.omr_all_agg) h += '<tr><td colspan="8" style="text-align:center;color:#999;">该次暂无已批改成绩</td></tr>';
+        h += '</tbody></table></div>';
+        h += '<p style="font-weight:bold;margin:16px 0 6px;color:#555;">逐题分析（第 ' + V.omr_sel_round + ' 次' + (V.omr_cls_ids.length > 1 ? ' · ' + esc(V.omr_classes[V.omr_sel_cls] || '') : '') + '）</p>'
+            + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+            + '<th>题号</th><th>题组</th><th>题型</th><th>正确答案</th><th>作答/参考</th><th>答对</th><th>正确率</th><th>选项分布（人数·占比）</th></tr></thead><tbody>';
+        V.omr_qs.forEach(function (q) {
+            var rate = q.n > 0 ? Math.round(q.correct / q.n * 1000) / 10 : 0;
+            var rateColor = rate >= 80 ? '#27ae60' : (rate >= 60 ? '#2980b9' : (rate >= 40 ? '#f39c12' : '#e74c3c'));
+            var keyLetters = String(q.key).split('');
+            h += '<tr><td style="font-weight:bold;color:#667eea;">' + q.no + '</td>'
+                + '<td>' + (q.sec !== '' ? esc(q.sec) : '—') + '</td>'
+                + '<td>' + (q.kind === 'multi' ? '多选' : '单选') + '</td>'
+                + '<td style="font-weight:bold;color:#27ae60;">' + (q.key !== '' ? esc(q.key) : '未设') + '</td>'
+                + '<td>' + q.answered + ' / ' + q.n + '</td>'
+                + '<td style="font-weight:bold;">' + (q.key !== '' ? q.correct : '—') + '</td>';
+            if (q.key === '') h += '<td><span style="color:#999;">—</span></td>';
+            else {
+                h += '<td><div style="display:flex;align-items:center;gap:8px;">'
+                    + '<div style="flex:1;max-width:120px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                    + '<div style="width:' + Math.min(100, rate) + '%;height:100%;background:' + rateColor + ';"></div></div>'
+                    + '<span style="font-size:12px;font-weight:bold;color:' + rateColor + ';">' + rate + '%</span></div></td>';
+            }
+            h += '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">';
+            for (var li = 0; li < q.opts; li++) {
+                var ch = 'ABCDE'[li], cnt = q.dist[ch] || 0;
+                var pct = q.n > 0 ? Math.round(cnt / q.n * 100) : 0;
+                var isKey = keyLetters.indexOf(ch) >= 0;
+                h += '<span style="display:inline-block;min-width:52px;text-align:center;padding:2px 6px;border-radius:6px;font-size:12px;'
+                    + (isKey ? 'background:#e8f8ef;color:#27ae60;font-weight:bold;border:1px solid #27ae60;' : 'background:#f2f3f8;color:#666;border:1px solid #dde3f0;')
+                    + '">' + ch + ' ' + cnt + '（' + pct + '%）</span>';
+            }
+            h += '</div></td></tr>';
+        });
+        if (!V.omr_qs.length) h += '<tr><td colspan="8" style="text-align:center;color:#999;">未绑定答题卡模板或该次无识别数据（模板在项目页「设计模板」绑定）</td></tr>';
+        h += '</tbody></table></div></div>';
+        // —— 学生个人成绩 ——
+        var omrSpan = 5 + V.omr_rounds.length + (V.omr_cls_ids.length > 1 ? 1 : 0);
+        h += '<div class="panel"><h3>👤 学生个人成绩（全部题次汇总' + hq('omrStu') + '）</h3>'
+            + '<div class="table-wrap"><table class="data-table"><thead><tr><th>座号</th><th>姓名</th>'
+            + (V.omr_cls_ids.length > 1 ? '<th>班级</th>' : '');
+        V.omr_rounds.forEach(function (r) {
+            h += '<th>第 ' + r.no + ' 次' + (r.title !== '' ? '<div style="font-size:11px;font-weight:normal;color:#999;">' + esc(r.title) + '</div>' : '') + '</th>';
+        });
+        h += '<th>总得分率</th><th>等级</th><th>班名</th><th>超均率</th></tr></thead><tbody>';
+        V.omr_stu_stats.forEach(function (st) {
+            var gColor = st.grade === 'A' ? '#27ae60' : (st.grade === 'B' ? '#2980b9' : (st.grade === 'C' ? '#f39c12' : '#e74c3c'));
+            var overColor = st.over === null ? '#999' : (st.over >= 0 ? '#27ae60' : '#e74c3c');
+            h += '<tr><td>' + esc(st.s.seat_no) + '</td><td style="font-weight:bold;">' + esc(st.s.name) + '</td>'
+                + (V.omr_cls_ids.length > 1 ? '<td>' + esc(st.s.class_name) + '</td>' : '');
+            st.cells.forEach(function (c) {
+                h += '<td>' + (c ? '<span style="font-weight:bold;color:' + (c.rate >= 80 ? '#27ae60' : (c.rate >= 60 ? '#2980b9' : '#e74c3c')) + ';">' + c.rate + '%</span>'
+                    + '<div style="font-size:11px;color:#999;">' + c.score + '</div>' : '<span style="color:#ccc;">—</span>') + '</td>';
+            });
+            h += '<td><div style="display:flex;align-items:center;gap:8px;">'
+                + '<div style="flex:1;max-width:100px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                + '<div style="width:' + Math.min(100, st.rate) + '%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);"></div></div>'
+                + '<span style="font-size:12px;font-weight:bold;color:#667eea;">' + st.rate + '%</span></div></td>'
+                + '<td><span style="display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;color:#fff;font-weight:bold;background:' + gColor + ';">' + st.grade + '</span></td>'
+                + '<td style="font-weight:bold;">' + (st.rank !== null ? st.rank : '—') + '</td>'
+                + '<td style="color:' + overColor + ';font-weight:bold;">' + (st.over === null ? '—' : (st.over >= 0 ? '+' : '') + st.over + '%') + '</td></tr>';
+        });
+        if (!V.omr_stu_stats.length) h += '<tr><td colspan="' + omrSpan + '" style="text-align:center;color:#999;">暂无已批改成绩（请先在「扫描」页识别答题卡并录入答案）</td></tr>';
+        h += '</tbody></table></div></div>';
+    } else if (V.is_quiz) {
+        // —— 多次汇总 ——
+        h += '<div class="panel"><h3>📈 多次汇总（各次答题总览' + hq('qzRound') + '）</h3>'
+            + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+            + '<th>次数</th><th>标题</th><th>正确答案</th><th>答题人数</th><th>答对</th><th>正确率</th><th>选项分布（人数·占比）</th></tr></thead><tbody>';
+        V.qz_round_stats.forEach(function (rs) {
+            var rateColor = rs.rate >= 80 ? '#27ae60' : (rs.rate >= 60 ? '#2980b9' : (rs.rate >= 40 ? '#f39c12' : '#e74c3c'));
+            var keyTxt = V.qz_correct[rs.no].join(' / ');
+            h += '<tr><td style="font-weight:bold;color:#667eea;">第 ' + rs.no + ' 次</td>'
+                + '<td>' + (rs.title !== '' ? esc(rs.title) : '—') + '</td>'
+                + '<td style="font-weight:bold;color:#27ae60;">' + (keyTxt !== '' ? esc(keyTxt) : '未设') + '</td>';
+            if (rs.answered <= 0) h += '<td colspan="4" style="text-align:center;color:#999;">该次暂无答题记录</td>';
+            else {
+                h += '<td>' + rs.answered + '</td><td style="font-weight:bold;">' + (rs.has_key ? rs.crt : '—') + '</td>';
+                if (!rs.has_key) h += '<td><span style="color:#999;">—</span></td>';
+                else {
+                    h += '<td><div style="display:flex;align-items:center;gap:8px;">'
+                        + '<div style="flex:1;max-width:120px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                        + '<div style="width:' + Math.min(100, rs.rate) + '%;height:100%;background:' + rateColor + ';"></div></div>'
+                        + '<span style="font-size:12px;font-weight:bold;color:' + rateColor + ';">' + omn(rs.rate) + '%</span></div></td>';
+                }
+                h += '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">';
+                ['A', 'B', 'C', 'D'].forEach(function (L) {
+                    var cnt = rs.dist[L] || 0;
+                    var pct = rs.answered > 0 ? Math.round(cnt / rs.answered * 100) : 0;
+                    var isKey = V.qz_correct[rs.no].indexOf(L) >= 0;
+                    h += '<span style="display:inline-block;min-width:52px;text-align:center;padding:2px 6px;border-radius:6px;font-size:12px;'
+                        + (isKey ? 'background:#e8f8ef;color:#27ae60;font-weight:bold;border:1px solid #27ae60;' : 'background:#f2f3f8;color:#666;border:1px solid #dde3f0;')
+                        + '">' + L + ' ' + cnt + '（' + pct + '%）</span>';
+                });
+                h += '</div></td>';
+            }
+            h += '</tr>';
+        });
+        if (!V.qz_round_stats.length) h += '<tr><td colspan="7" style="text-align:center;color:#999;">暂无题次（在项目页顶部可新增题次）</td></tr>';
+        h += '</tbody></table></div></div>';
+        // —— 班级单次分析 ——
+        h += '<div class="panel"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+            + '<h3 style="margin:0;">🏫 班级单次分析</h3>'
+            + '<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">次数<select class="form-control" style="width:auto;padding:4px 8px;" onchange="omrJump(\'round\', this.value)">';
+        V.qz_rounds.forEach(function (r) {
+            h += '<option value="' + r.no + '"' + (r.no === V.qz_sel_round ? ' selected' : '') + '>第 ' + r.no + ' 次' + (r.title !== '' ? '·' + esc(r.title) : '') + '</option>';
+        });
+        h += '</select></label>';
+        if (V.qz_cls_ids.length > 1) {
+            h += '<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">班级（选项分布）<select class="form-control" style="width:auto;padding:4px 8px;" onchange="omrJump(\'qcls\', this.value)">';
+            V.qz_cls_ids.forEach(function (cid) {
+                if (!V.qz_classes[cid]) return;
+                h += '<option value="' + cid + '"' + (cid === V.qz_sel_cls ? ' selected' : '') + '>' + esc(V.qz_classes[cid]) + '</option>';
+            });
+            h += '</select></label>';
+        }
+        h += '</div><p style="font-weight:bold;margin:14px 0 6px;color:#555;">各班对比（第 ' + V.qz_sel_round + ' 次）</p>'
+            + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+            + '<th>班级</th><th>答题人数</th><th>答对</th><th>正确率</th><th>超均率</th></tr></thead><tbody>';
+        var qzSelStats = V.qz_cls_stats.filter(function (cs) { return cs.no == V.qz_sel_round; });
+        qzSelStats.forEach(function (cs) {
+            cs.rows.forEach(function (a) {
+                var overColor = a.over === null ? '#999' : (a.over >= 0 ? '#27ae60' : '#e74c3c');
+                h += '<tr><td style="font-weight:bold;">' + esc(a.name) + '</td><td>' + a.n + '</td>'
+                    + '<td style="font-weight:bold;">' + (cs.has_key ? a.crt : '—') + '</td>';
+                if (!cs.has_key) h += '<td><span style="color:#999;">—</span></td>';
+                else {
+                    h += '<td><div style="display:flex;align-items:center;gap:8px;">'
+                        + '<div style="flex:1;max-width:120px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                        + '<div style="width:' + Math.min(100, a.rate) + '%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);"></div></div>'
+                        + '<span style="font-size:12px;color:#888;">' + omn(a.rate) + '%</span></div></td>';
+                }
+                h += '<td style="color:' + overColor + ';font-weight:bold;">' + (a.over === null ? '—' : (a.over >= 0 ? '+' : '') + omn(a.over) + '%') + '</td></tr>';
+            });
+            if (cs.has_key) {
+                h += '<tr style="background:#f6f7fd;"><td style="font-weight:bold;color:#667eea;">全体合计</td><td>' + cs.all_n + '</td>'
+                    + '<td style="font-weight:bold;">' + cs.all_crt + '</td><td style="font-weight:bold;">' + omn(cs.all_rate) + '%</td><td>—</td></tr>';
+            }
+        });
+        if (!qzSelStats.length) h += '<tr><td colspan="5" style="text-align:center;color:#999;">该次暂无答题记录</td></tr>';
+        h += '</tbody></table></div>';
+        h += '<p style="font-weight:bold;margin:16px 0 6px;color:#555;">选项分布（第 ' + V.qz_sel_round + ' 次 · ' + esc(V.qz_classes[V.qz_sel_cls] || '') + '）</p>';
+        if (!V.qz_sel_n) h += '<p style="color:#999;font-size:13px;">该班本次暂无答题记录</p>';
+        else {
+            h += '<p style="color:#666;font-size:13px;margin:0 0 8px;">答题 ' + V.qz_sel_n + ' 人'
+                + (V.qz_sel_key.length ? ' · 答对 ' + V.qz_sel_crt + ' 人 · 正确率 ' + omn(Math.round(V.qz_sel_crt / V.qz_sel_n * 1000) / 10) + '%（正确答案：' + esc(V.qz_sel_key.join(' / ')) + '）' : ' · 未设正确答案，不判对错') + '</p>'
+                + '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+            ['A', 'B', 'C', 'D'].forEach(function (L) {
+                var cnt = V.qz_sel_dist[L] || 0;
+                var pct = V.qz_sel_n > 0 ? Math.round(cnt / V.qz_sel_n * 100) : 0;
+                var isKey = V.qz_sel_key.indexOf(L) >= 0;
+                h += '<div style="flex:1;min-width:150px;background:' + (isKey ? '#e8f8ef' : '#f6f7fd') + ';border:1px solid ' + (isKey ? '#27ae60' : '#dde3f0') + ';border-radius:10px;padding:10px 12px;">'
+                    + '<div style="font-size:13px;color:' + (isKey ? '#27ae60' : '#666') + ';font-weight:bold;">' + L + ' ' + (isKey ? '✓ 正确答案' : '') + '</div>'
+                    + '<div style="font-size:22px;font-weight:bold;color:#555;">' + cnt + ' 人</div>'
+                    + '<div style="margin-top:4px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                    + '<div style="width:' + pct + '%;height:100%;background:' + (isKey ? '#27ae60' : '#667eea') + ';"></div></div>'
+                    + '<div style="font-size:12px;color:#888;margin-top:3px;">占答题 ' + pct + '%</div></div>';
+            });
+            h += '</div>';
+        }
+        h += '</div>';
+        // —— 学生个人答题情况 ——
+        var qzSpan = 6 + V.qz_rounds.length + (V.qz_cls_ids.length > 1 ? 1 : 0);
+        h += '<div class="panel"><h3>👤 学生个人答题情况（全部题次汇总' + hq('qzStu') + '）</h3>'
+            + '<div class="table-wrap"><table class="data-table"><thead><tr><th>座号</th><th>姓名</th>'
+            + (V.qz_cls_ids.length > 1 ? '<th>班级</th>' : '');
+        V.qz_rounds.forEach(function (r) {
+            h += '<th>第 ' + r.no + ' 次' + (r.title !== '' ? '<div style="font-size:11px;font-weight:normal;color:#999;">' + esc(r.title) + '</div>' : '') + '</th>';
+        });
+        h += '<th>总正确率</th><th>等级</th><th>班名</th><th>超均率</th></tr></thead><tbody>';
+        var qzHas = false;
+        Object.keys(V.qz_stu_stats).forEach(function (sid) {
+            qzHas = true;
+            var st = V.qz_stu_stats[sid], s = st.s;
+            var cavg = V.qz_cls_avg[s.class_id] || 0;
+            var over = cavg > 0 ? Math.round((st.rate - cavg) / cavg * 1000) / 10 : null;
+            var overColor = over === null ? '#999' : (over >= 0 ? '#27ae60' : '#e74c3c');
+            var rank = V.qz_cls_rank[s.class_id] ? (V.qz_cls_rank[s.class_id][parseInt(sid, 10)] || null) : null;
+            var grade = st.rate >= 80 ? 'A' : (st.rate >= 70 ? 'B' : (st.rate >= 60 ? 'C' : 'D'));
+            var gColor = grade === 'A' ? '#27ae60' : (grade === 'B' ? '#2980b9' : (grade === 'C' ? '#f39c12' : '#e74c3c'));
+            h += '<tr><td>' + esc(s.seat_no) + '</td><td style="font-weight:bold;">' + esc(s.name) + '</td>'
+                + (V.qz_cls_ids.length > 1 ? '<td>' + esc(s.class_name) + '</td>' : '');
+            st.cells.forEach(function (c) {
+                h += '<td>' + (c.opt === null ? '<span style="color:#ccc;">—</span>'
+                    : (!c.has_key ? '<span style="color:#2980b9;font-weight:bold;">' + c.opt + '</span>'
+                    : (c.ok ? '<span style="color:#27ae60;font-weight:bold;">' + c.opt + ' ✓</span>'
+                    : '<span style="color:#e74c3c;font-weight:bold;">' + c.opt + ' ✗</span>'))) + '</td>';
+            });
+            h += '<td><div style="display:flex;align-items:center;gap:8px;">'
+                + '<div style="flex:1;max-width:100px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                + '<div style="width:' + Math.min(100, st.rate) + '%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);"></div></div>'
+                + '<span style="font-size:12px;font-weight:bold;color:#667eea;">' + omn(st.rate) + '%</span></div></td>'
+                + '<td><span style="display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;color:#fff;font-weight:bold;background:' + gColor + ';">' + grade + '</span></td>'
+                + '<td style="font-weight:bold;">' + (rank !== null ? rank : '—') + '</td>'
+                + '<td style="color:' + overColor + ';font-weight:bold;">' + (over === null ? '—' : (over >= 0 ? '+' : '') + omn(over) + '%') + '</td></tr>';
+        });
+        if (!qzHas) h += '<tr><td colspan="' + qzSpan + '" style="text-align:center;color:#999;">暂无答题记录（请先在项目页进行举牌/答题登记）</td></tr>';
+        h += '</tbody></table></div></div>';
+    } else {
+        if (V.is_daily && V.daily_rows.length) {
+            h += '<div class="panel"><h3>📅 每日打卡情况（每次）</h3><div class="table-wrap"><table class="data-table">'
+                + '<thead><tr><th>日期</th><th>打卡人数</th><th>占全班比例</th></tr></thead><tbody>';
+            V.daily_rows.forEach(function (r) {
+                var rr = TOTAL_STUDENTS > 0 ? Math.round(r.cnt / TOTAL_STUDENTS * 100) : 0;
+                h += '<tr><td>' + esc(r.date) + '</td><td style="color:#27ae60;font-weight:bold;">' + r.cnt + '</td>'
+                    + '<td><div style="display:flex;align-items:center;gap:8px;">'
+                    + '<div style="flex:1;max-width:160px;height:8px;background:#eee;border-radius:4px;overflow:hidden;">'
+                    + '<div style="width:' + rr + '%;height:100%;background:linear-gradient(90deg,#27ae60,#66bb6a);"></div></div>'
+                    + '<span style="font-size:12px;color:#888;">' + rr + '%</span></div></td></tr>';
+            });
+            h += '</tbody></table></div></div>';
+        }
+        h += '<div class="panel"><h3>👥 学生登记情况（总体）</h3><div class="table-wrap"><table class="data-table"><thead>';
+        if (V.is_daily) h += '<tr><th>座号</th><th>姓名</th><th>编号</th><th>打卡天数</th><th>最近打卡</th><th>评价内容</th></tr>';
+        else h += '<tr><th>座号</th><th>姓名</th><th>编号</th><th>状态</th><th>登记时间</th><th>评价内容</th></tr>';
+        h += '</thead><tbody>';
+        V.stu_rows.forEach(function (s) {
+            h += '<tr><td>' + esc(s.s.seat_no) + '</td><td>' + esc(s.s.name) + '</td><td>' + esc(s.s.student_no) + '</td>';
+            if (V.is_daily) {
+                h += '<td style="color:' + (s.rdays > 0 ? '#27ae60' : '#999') + ';font-weight:bold;">' + s.rdays + ' 天</td>'
+                    + '<td>' + (s.last_day ? esc(s.last_day) : '—') + '</td>';
+            } else {
+                h += '<td>' + (s.registered == 1 ? '<span style="color:#27ae60;font-weight:bold;">已登记</span>' : '<span style="color:#999;">未登记</span>') + '</td>'
+                    + '<td>' + (s.registered_at ? esc(s.registered_at) : '—') + '</td>';
+            }
+            h += '<td>' + (s.eval_value !== null && s.eval_value !== undefined && s.eval_value !== '' ? esc(s.eval_value) : '—') + '</td></tr>';
+        });
+        if (!V.stu_rows.length) h += '<tr><td colspan="6" style="text-align:center;color:#999;">暂无学生</td></tr>';
+        h += '</tbody></table></div></div>';
+        h += '<div class="panel"><h3>评价分布统计（本项目）</h3>';
+        if (!V.proj_eval.length) h += '<p style="color:#999;font-size:14px;">暂无评价数据</p>';
+        else {
+            h += '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+            V.proj_eval.forEach(function (it) {
+                h += '<div class="stat-box" style="min-width:100px;padding:12px;">'
+                    + '<div class="num" style="font-size:22px;">' + esc(it.v) + '</div>'
+                    + '<div class="label">' + it.cnt + ' 人次</div></div>';
+            });
+            h += '</div>';
+        }
+        h += '</div>';
+    }
+    // —— 导出面板 ——
+    h += '<div class="panel"><h3>⬇ 导出</h3>';
+    if (V.is_omr) {
+        h += '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            + '<button type="button" class="btn btn-sm btn-outline" onclick="expOmrReport(' + V.pid + ')">⬇ 导出统计报表（Excel：多次汇总/班级对比/学生个人/逐题分析）</button>'
+            + '<button type="button" class="btn btn-sm btn-outline" onclick="expOmrAnswers(' + V.pid + ')">⬇ 导出每生每题作答明细（Excel：每生每题选择情况）</button></div>';
+    } else {
+        h += '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            + '<button type="button" class="btn btn-sm btn-outline" onclick="expProject(' + V.pid + ')">⬇ 下载导出详细数据' + (V.is_daily ? '（Excel：是否登记/登记时间/评价内容）' : '（学生登记/评价明细）') + '</button>';
+        if (V.is_daily) h += '<button type="button" class="btn btn-sm btn-outline" onclick="expProjectDaily(' + V.pid + ')">⬇ 导出每日打卡明细（每生每日期）</button>';
+        h += '</div>';
+    }
+    h += '</div>';
+    // —— 教师点评 ——
+    var cmMap = {};
+    D.comments.forEach(function (c) { if (parseInt(c.project_id, 10) === V.pid) cmMap[c.student_id] = String(c.content || ''); });
+    h += '<div class="panel"><h3>💬 教师点评</h3>'
+        + '<p style="color:#999;font-size:13px;margin-top:0;">针对本项目每个学生的个性化点评，家长在公开查询页「综合报告」中可见；项目视图长按学生卡片 → 评价弹窗内也可单条填写。</p>'
+        + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+        + '<span style="font-size:14px;">已点评 <b style="color:#667eea;font-size:18px;">' + Object.keys(cmMap).length + '</b> / ' + V.stu_rows.length + ' 人</span>'
+        + '<button type="button" class="btn btn-sm" onclick="openModal(\'cmModal\')">✍ 批量点评</button></div></div>';
+    document.getElementById('viewRoot').innerHTML = h;
+    document.title = '单项统计 - ' + p.name;
+    CM_PROJECT_ID = V.pid;
+    var list = '';
+    V.stu_rows.forEach(function (s) {
+        var cmo = cmMap[s.s.id] || '';
+        list += '<div class="cm-row" data-sid="' + s.s.id + '" data-no="' + escAttr(s.s.student_no) + '" data-name="' + escAttr(s.s.name) + '" data-orig="' + escAttr(cmo) + '">'
+            + '<div class="cm-info"><b>' + esc(s.s.name) + '</b>'
+            + '<small>座号 ' + esc(s.s.seat_no) + ' · ' + esc(s.s.student_no || '无编号') + '</small>'
+            + (cmo !== '' ? '<small style="color:#e67e22;" class="cm-cur">现：' + esc(cmo) + '</small>' : '') + '</div>'
+            + '<input type="text" class="form-control cm-input" value="' + escAttr(cmo) + '" placeholder="点评内容（留空保存 = 删除已有点评）" maxlength="500"></div>';
+    });
+    if (!V.stu_rows.length) list = '<div style="padding:24px;text-align:center;color:#98a0b3;font-size:13px;">该班级暂无学生</div>';
+    document.getElementById('cmList').innerHTML = list;
+    document.getElementById('cmTitle').textContent = p.name;
+    fillChartModal();
+}
+
+// ===== 渲染：学生统计 =====
+function renderStudent() {
+    var V = SV, stu = V.student;
+    var h = '<div class="stat-bar">'
+        + '<div class="stat-box"><div class="num">' + V.per.length + '</div><div class="label">项目总数</div></div>'
+        + '<div class="stat-box"><div class="num green">' + V.sum.reg + '</div><div class="label">已登记项目</div></div>'
+        + '<div class="stat-box"><div class="num orange">' + V.sum.days + '</div><div class="label">累计打卡天数</div></div>'
+        + '<div class="stat-box"><div class="num">' + V.sum.eval + '</div><div class="label">已评价项目</div></div></div>';
+    h += '<div class="panel"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+        + '<h3 style="margin:0;">👤 ' + esc(stu.name) + '</h3>'
+        + '<span style="color:#888;font-size:13px;">座号 ' + esc(stu.seat_no) + ' · 编号 ' + esc(stu.student_no || '—') + '</span>'
+        + '<div style="flex:1;"></div><button type="button" class="btn btn-sm" onclick="openModal(\'chartModal\');renderChart()">📊 统计图表</button></div>'
+        + '<div class="table-wrap"><table class="data-table">'
+        + '<thead><tr><th>项目</th><th>模式</th><th>状态</th><th>登记时间</th><th>评价内容</th></tr></thead><tbody>';
+    V.per.forEach(function (row) {
+        var p = row.p, isD = p.mode === 'daily', isO = p.mode === 'omr';
+        h += '<tr><td>' + esc(p.name) + '</td>'
+            + '<td><span class="badge badge-count"' + (isO ? ' style="background:#667eea;"' : '') + '>' + (isO ? '答题卡' : (isD ? '打卡' : '一次性')) + '</span></td>';
+        if (isO) {
+            h += '<td>' + (row.omr_text !== '' ? '<span style="color:#27ae60;font-weight:bold;">√ ' + esc(row.omr_text) + '</span>' : '<span style="color:#999;">× 未识别</span>') + '</td>';
+        } else if (isD) {
+            if (row.days > 0) h += '<td><span style="color:#27ae60;font-weight:bold;">√ 打卡 ' + row.days + ' 天</span>'
+                + '<span style="color:#999;font-size:12px;">（最近 ' + esc(row.last) + '）</span></td>';
+            else h += '<td><span style="color:#999;">× 未打卡</span></td>';
+        } else {
+            h += '<td>' + (row.is_reg ? '<span style="color:#27ae60;font-weight:bold;">√ 已登记</span>' : '<span style="color:#999;">× 未登记</span>') + '</td>';
+        }
+        h += '<td>' + (row.rec && row.rec.registered_at ? esc(row.rec.registered_at) : '—') + '</td>'
+            + '<td>' + (row.rec && row.rec.eval_value !== null && row.rec.eval_value !== undefined && row.rec.eval_value !== '' ? esc(row.rec.eval_value) : '—') + '</td></tr>';
+    });
+    if (!V.per.length) h += '<tr><td colspan="5" style="text-align:center;color:#999;">暂无项目</td></tr>';
+    h += '</tbody></table></div></div>';
+    h += '<div class="panel"><h3>⬇ 导出</h3>'
+        + '<button type="button" class="btn btn-sm btn-outline" onclick="expStudentDetail(' + stu.id + ')">⬇ 导出登记情况（Excel：是否登记/登记时间/评价内容）</button></div>';
+    document.getElementById('viewRoot').innerHTML = h;
+    document.title = '学生统计 - ' + stu.name;
+    fillChartModal();
+}
+
+// ===== 返回链接（embed 模式无；nav_only_proj=仅带 project_id 进入 → 返回项目情况） =====
+function setBackLink() {
+    var wrap = document.getElementById('backWrap');
+    if (!wrap) return;
+    if (EMBED) { wrap.innerHTML = ''; return; }
+    var href, label;
+    if (VIEW === 'class') { href = 'projects.html?class_id=' + CLASS_ID; label = '← 返回班级情况'; }
+    else if (NAV_ONLY_PROJ) { href = 'project_view.html?project_id=' + PROJECT_ID; label = '← 返回项目情况'; }
+    else { href = 'stats.html?class_id=' + CLASS_ID; label = '← 返回班级统计'; }
+    wrap.innerHTML = '<a href="' + href + '" style="display:inline-block;margin-bottom:15px;color:#667eea;text-decoration:none;">' + label + '</a>';
+}
+
+// ===== 统计图表弹窗数据集填充 =====
+function fillChartModal() {
+    var ds = document.getElementById('chart_ds');
+    ds.innerHTML = Object.keys(CHART_SETS).map(function (k) {
+        return '<option value="' + k + '">' + esc(CHART_SETS[k]) + '</option>';
+    }).join('');
+    var sel = document.getElementById('chart_proj');
+    sel.innerHTML = Object.keys(EVAL).map(function (k) {
+        return '<option value="' + k + '">' + esc(EVAL[k].name) + '</option>';
+    }).join('');
+    onChartDsChange();
+}
+
+// ===== 学生每次明细弹窗（登记矩阵点姓名列） =====
+function smxEsc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+function openStuMatrix(sid) {
+    if (!MX_DATA || !MX_DATA.students) return;
+    var st = MX_DATA.students[sid];
+    if (!st) return;
+    document.getElementById('smx_title').textContent = '👤 ' + st.name + '（座号 ' + (st.seat || '—') + '）· 完成 ' + st.cnt + ' / ' + MX_DATA.rows.length;
+    var head = document.querySelector('#stuMatrixModal thead th');
+    if (head) head.textContent = MX_DATA.label === '日期' ? '日期' : MX_DATA.label;
+    var missTxt = MX_DATA.label === '日期' ? '未打卡' : '未登记';
+    var h = [];
+    MX_DATA.rows.forEach(function (r, i) {
+        var c = st.cells[i];
+        var info = st.info[i] || '';
+        h.push('<tr><td style="white-space:nowrap;">' + smxEsc(r.label) + '<span style="color:#999;">（' + smxEsc(r.sub) + '）</span></td>'
+            + '<td style="font-weight:bold;color:' + (c ? (c.c === 'ok' ? '#27ae60' : (c.c === 'bad' ? '#e74c3c' : '#888')) : '#bbb') + ';">' + (c ? smxEsc(c.t) : '×') + '</td>'
+            + '<td style="font-size:12px;color:#666;">' + (info ? smxEsc(info) : missTxt) + '</td></tr>');
+    });
+    document.getElementById('smx_body').innerHTML = h.join('');
+    openModal('stuMatrixModal');
+}
+
+// ===== 批量导出所选项目（班级总览勾选） =====
+function projAll(master) {
+    document.querySelectorAll('.proj-ck').forEach(function (c) { c.checked = master.checked; });
+    updateProjSel();
+}
+function projSelCount() { return document.querySelectorAll('.proj-ck:checked').length; }
+function updateProjSel() {
+    var tip = document.getElementById('projSelTip');
+    if (tip) tip.textContent = projSelCount() > 0 ? ('已选 ' + projSelCount() + ' 个项目') : '未勾选项目';
+}
+
+// ===== 答题卡单次分析切换（次数/班级），保持内嵌模式 =====
+function omrJump(key, val) {
+    var p = new URLSearchParams(location.search);
+    p.set(key, val);
+    location.search = p.toString();
+}
+
+// ===== 教师点评：粘贴批量导入解析 =====
+function cmParsePaste() {
+    var txt = document.getElementById('cmPaste').value.trim();
+    var msg = document.getElementById('cmParseMsg');
+    if (!txt) { msg.style.color = '#e67e22'; msg.textContent = '请先粘贴内容'; return; }
+    var noMap = {}, nameMap = {}, nameDup = {};
+    document.querySelectorAll('#cmList .cm-row').forEach(function (row) {
+        noMap[row.dataset.no] = row;
+        var nm = row.dataset.name;
+        if (nameMap[nm]) nameDup[nm] = true; else nameMap[nm] = row;
+    });
+    var ok = 0, fail = [];
+    txt.split(/\r?\n/).forEach(function (line) {
+        line = line.trim();
+        if (!line) return;
+        var idx = -1;
+        for (var i = 0; i < line.length; i++) { if (line[i] === ',' || line[i] === '，' || line[i] === '\t') { idx = i; break; } }
+        var key = idx === -1 ? line : line.slice(0, idx).trim();
+        var content = idx === -1 ? '' : line.slice(idx + 1).trim();
+        var row = noMap[key] || (nameDup[key] ? null : nameMap[key]);
+        if (!row) { fail.push(key); return; }
+        row.querySelector('.cm-input').value = content;
+        row.classList.add('cm-touched');
+        ok++;
+    });
+    msg.style.color = fail.length ? '#e74c3c' : '#27ae60';
+    msg.textContent = '解析填充 ' + ok + ' 条' + (fail.length ? '，未匹配：' + fail.slice(0, 5).join('、') + (fail.length > 5 ? ' 等' + fail.length + '项' : '') : '');
+}
+// 保存：仅提交「输入内容 ≠ 原值」的行（api.php 由 Service Worker 拦截本地处理，空串=删除）
+// 单机版契约：逐条走 comment_save（project_id/student_id/content，空串=删除），等价原 comments_batch 语义
+function cmSave() {
+    var items = [];
+    document.querySelectorAll('#cmList .cm-row').forEach(function (row) {
+        var v = row.querySelector('.cm-input').value.trim();
+        if (v !== (row.dataset.orig || '')) items.push({ student_id: parseInt(row.dataset.sid, 10), content: v });
+    });
+    if (!items.length) { showToast('没有需要保存的修改', 'error'); return; }
+    document.getElementById('cmStat').textContent = '正在保存 ' + items.length + ' 条…';
+    var saved = 0, skipped = 0, errMsg = '';
+    (function next(i) {
+        if (i >= items.length) {
+            if (!saved && skipped && errMsg) {
+                document.getElementById('cmStat').textContent = '';
+                showToast(errMsg, 'error');
+                return;
+            }
+            showToast('已保存 ' + saved + ' 条点评' + (skipped ? '，跳过 ' + skipped + ' 条' : ''), 'success');
+            closeModal('cmModal');
+            setTimeout(function () { location.reload(); }, 700);
+            return;
+        }
+        var it = items[i];
+        var fd = new FormData();
+        fd.append('type', 'comment_save');
+        fd.append('project_id', CM_PROJECT_ID);
+        fd.append('student_id', it.student_id);
+        fd.append('content', it.content);
+        fetch('api.php', { method: 'POST', body: fd }).then(function (r) { return r.json(); }).then(function (d) {
+            if (d && d.success) saved++;
+            else { skipped++; if (!errMsg) errMsg = (d && d.message) || '保存失败'; }
+            next(i + 1);
+        }).catch(function () {
+            skipped++; if (!errMsg) errMsg = '网络错误，保存失败';
+            next(i + 1);
+        });
+    })(0);
+}
+
+// ===== 统计图表（ECharts：条形 / 折线 / 饼图，数据 × 图型自由切换，右上角可存图） =====
+var COLORS = ['#667eea', '#27ae60', '#f39c12', '#e74c3c', '#9b59b6', '#00bcd4', '#ff7043', '#8d6e63', '#5c6bc0', '#66bb6a'];
+var chartType = 'bar';
+var chartInst = null;
+function setChartType(btn) {
+    chartType = btn.getAttribute('data-t');
+    document.querySelectorAll('.chart-type').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    renderChart();
+}
+function onChartDsChange() {
+    var ds = document.getElementById('chart_ds').value;
+    var wrap = document.getElementById('chart_proj_wrap');
+    if (wrap) wrap.style.display = ds === 'eval' ? 'inline-flex' : 'none';
+    if (document.getElementById('chartModal').classList.contains('show')) renderChart();
+}
+function chartData() {
+    var ds = document.getElementById('chart_ds').value;
+    if (ds === 'eval') {
+        var sel = document.getElementById('chart_proj');
+        if (sel) {
+            var e = EVAL[sel.value];
+            if (!e) return null;
+            var ls = [], vs = [];
+            (e.items || []).forEach(function (it) { ls.push(it.v); vs.push(it.cnt); });
+            return { labels: ls, values: vs };
+        }
+    }
+    var d = CHART_DATA[ds];
+    return d ? { labels: d.labels, values: d.values } : null;
+}
+function getChart() {
+    var el = document.getElementById('chartCanvas');
+    if (!chartInst) {
+        chartInst = echarts.init(el);
+        window.addEventListener('resize', function () { if (chartInst) chartInst.resize(); });
+    }
+    return chartInst;
+}
+function chartBase() {
+    return {
+        tooltip: { trigger: 'axis' },
+        toolbox: { right: 6, top: 2, feature: { saveAsImage: { title: '存图' } } },
+        grid: { left: 54, right: 26, top: 34, bottom: 76 }
+    };
+}
+function chartAxis(d) {
+    var n = d.labels.length;
+    return {
+        type: 'category',
+        data: d.labels.map(String),
+        axisLabel: {
+            interval: 0, fontSize: 11,
+            rotate: n > 8 ? 38 : 0,
+            formatter: function (v) { return trunc(v, 8); }
+        }
+    };
+}
+function renderChart() {
+    var d = chartData();
+    var empty = !d || !d.labels || !d.labels.length || d.values.every(function (v) { return v === 0; });
+    document.getElementById('chart_empty').style.display = empty ? '' : 'none';
+    document.getElementById('chartCanvas').style.display = empty ? 'none' : '';
+    if (empty) { if (chartInst) chartInst.clear(); return; }
+    if (typeof echarts === 'undefined') {
+        document.getElementById('chart_empty').style.display = '';
+        document.getElementById('chart_empty').textContent = '图表库（assets/echarts.min.js）未找到，图表不可用';
+        return;
+    }
+    var inst = getChart();
+    var opt;
+    if (chartType === 'pie') {
+        opt = Object.assign(chartBase(), {
+            tooltip: { trigger: 'item', formatter: '{b}：{c}（{d}%）' },
+            legend: { type: 'scroll', bottom: 6, textStyle: { fontSize: 11 } },
+            grid: { left: 10, right: 10, top: 10, bottom: 10 },
+            series: [{
+                type: 'pie', radius: ['36%', '64%'], center: ['50%', '44%'],
+                label: { formatter: '{b}\n{c}', fontSize: 11 },
+                data: d.labels.map(function (l, i) {
+                    return { name: String(l), value: d.values[i], itemStyle: { color: COLORS[i % COLORS.length] } };
+                })
+            }]
+        });
+    } else if (chartType === 'line') {
+        opt = Object.assign(chartBase(), {
+            xAxis: chartAxis(d),
+            yAxis: { type: 'value' },
+            dataZoom: d.labels.length > 30 ? [{ type: 'inside' }] : [],
+            series: [{
+                name: '数值', type: 'line', data: d.values, smooth: true, symbolSize: 7,
+                itemStyle: { color: '#667eea' }, lineStyle: { width: 2.5, color: '#667eea' },
+                areaStyle: { color: '#667eea', opacity: 0.12 },
+                label: { show: d.labels.length <= 15, position: 'top', fontSize: 10, color: '#666' }
+            }]
+        });
+    } else {
+        opt = Object.assign(chartBase(), {
+            xAxis: chartAxis(d),
+            yAxis: { type: 'value' },
+            dataZoom: d.labels.length > 30 ? [{ type: 'inside' }] : [],
+            series: [{
+                name: '数值', type: 'bar', barMaxWidth: 42,
+                data: d.values.map(function (v, i) {
+                    return { value: v, itemStyle: { color: COLORS[i % COLORS.length] } };
+                }),
+                label: { show: d.labels.length <= 20, position: 'top', fontSize: 10, color: '#666' }
+            }]
+        });
+    }
+    inst.setOption(opt, true);
+    setTimeout(function () { if (chartInst) chartInst.resize(); }, 60);
+}
+function trunc(s, n) {
+    s = String(s);
+    return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+// 默认选中第一个图型按钮
+(function () {
+    var first = document.querySelector('.chart-type');
+    if (first) first.classList.add('active');
+})();
+HQ.statBar = "'<b>统计口径说明</b><br>· <b>打卡项目</b>：打卡天数=有记录的天数、人次=记录条数、人数=去重学生数<br>· <b>其他项目</b>：已登记/未登记按登记记录统计<br>· <b>已评价</b>=附有评价内容的记录数<br>· 已禁用学生不计入'";
+var CM_PROJECT_ID = 0;
+// ===== 导出构建器（口径逐条对照 export.php；stats 页入口均为全量、不带时间范围） =====
+D.settings = D.settings || {};
+D.recMap = D.recMap || {};
+D.projectsC = D.projectsC || [];
+
+var XMLNS_HEAD = '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"'
+    + ' xmlns:o="urn:schemas-microsoft-com:office:office"'
+    + ' xmlns:x="urn:schemas-microsoft-com:office:excel"'
+    + ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">';
+
+function xmlEsc(s) {
+    return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+function excelXmlSheetName(name, used) {   // 非法字符清洗 + 限 20 字 + 去重（同蓝本）
+    name = String(name === null || name === undefined ? '' : name).replace(/[\\\/\?\*\[\]:]/g, ' ').trim();
+    if (name === '') name = 'Sheet';
+    var arr = Array.from(name);
+    if (arr.length > 20) name = arr.slice(0, 20).join('');
+    var base = name, i = 2;
+    while (used[name]) { name = base + '(' + i + ')'; i++; }
+    used[name] = true;
+    return name;
+}
+function excelXmlString(sheets) {
+    var out = '\uFEFF<?xml version="1.0" encoding="UTF-8"?>\n<?mso-application progid="Excel.Sheet"?>\n' + XMLNS_HEAD + '\n';
+    var used = {};
+    sheets.forEach(function (sh) {
+        var maxcols = 0;
+        sh.rows.forEach(function (row) { if (row.length > maxcols) maxcols = row.length; });
+        out += '<Worksheet ss:Name="' + xmlEsc(excelXmlSheetName(sh.name, used)) + '"><Table>';
+        for (var i = 0; i < maxcols; i++) out += '<Column ss:Width="95"/>';
+        sh.rows.forEach(function (row) {
+            out += '<Row>';
+            row.forEach(function (cell) {
+                out += '<Cell><Data ss:Type="String">' + xmlEsc(cell) + '</Data></Cell>';
+            });
+            out += '</Row>';
+        });
+        out += '</Table></Worksheet>\n';
+    });
+    out += '</Workbook>';
+    return out;
+}
+function outputExcelXml(filename, sheets) {
+    downloadBlob(filename, new Blob([excelXmlString(sheets)], { type: 'application/vnd.ms-excel;charset=utf-8' }));
+}
+function outputCsv(filename, rows) {
+    var text = '\uFEFF';
+    rows.forEach(function (row) {
+        var cells = [];
+        row.forEach(function (cell) { cells.push('"' + String(cell === null || cell === undefined ? '' : cell).replace(/"/g, '""') + '"'); });
+        text += cells.join(',') + '\r\n';
+    });
+    downloadBlob(filename, new Blob([text], { type: 'text/csv;charset=utf-8' }));
+}
+function downloadBlob(filename, blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 400);
+}
+function stamp() {   // date('Ymd_Hi')
+    function p2(n) { return n < 10 ? '0' + n : '' + n; }
+    var d = new Date();
+    return '' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '_' + p2(d.getHours()) + p2(d.getMinutes());
+}
+function nowLabel() {   // date('Y-m-d H:i')
+    function p2(n) { return n < 10 ? '0' + n : '' + n; }
+    var d = new Date();
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+function rankOfObj(vals) {   // {sid: rate} → {sid: 名次}（降序同率并列）
+    var pairs = [];
+    Object.keys(vals).forEach(function (k) { pairs.push([parseInt(k, 10), vals[k]]); });
+    return rankDesc(pairs);
+}
+function omrScoreParts(score) {
+    var parts = String(score === null || score === undefined ? '' : score).split('/');
+    var g = parseFloat(parts[0]); if (isNaN(g)) g = 0;
+    var t = parts.length > 1 ? parseFloat(parts[1]) : NaN;
+    if (isNaN(t)) t = 0;
+    return { g: g, t: t, two: parts.length > 1 };
+}
+
+// ---- OMR 导出数据层 ----
+function omrExpStudents(project) {   // 项目覆盖班级、未禁用学生（class_id→座号→id 排序）
+    var uniq = [];
+    projectClassIds(project).forEach(function (c) { var ci = parseInt(c, 10); if (uniq.indexOf(ci) < 0) uniq.push(ci); });
+    var map = {};
+    D.classes.forEach(function (c) { if (uniq.indexOf(c.id) >= 0) map[c.id] = String(c.name || ''); });
+    var stus = [];
+    D.students.filter(function (s) { return uniq.indexOf(s.class_id) >= 0 && s.disabled != 1; })
+        .sort(function (a, b) { return a.class_id - b.class_id || seatCmp(a, b); })
+        .forEach(function (s) {
+            stus.push({ sid: s.id, class_name: map[s.class_id] || ('班级#' + s.class_id), seat_no: String(s.seat_no || ''),
+                name: String(s.name || ''), student_no: String(s.student_no || ''), per: {} });
+        });
+    return stus;
+}
+function omrSel(ans, q) {
+    return String((ans && ans[String(q)]) || '').replace(/[^A-E]/g, '').toUpperCase();
+}
+function omrIsCorrect(ctx, sel, q) {   // 判对口径同识别端：单选全等、多选子集
+    var key = ctx.key[String(q)] || '';
+    if (key === '' || sel === '') return false;
+    if ((ctx.kind[String(q)] || 'single') === 'multi') {
+        var kArr = key.split('');
+        return sel.split('').every(function (ch) { return kArr.indexOf(ch) >= 0; });
+    }
+    return sel === key;
+}
+function omrAllQs(ctx, stus, fallback) {   // 题号列表（升序）：模板题组优先；fallback 且空时按作答题号兜底（single/4 选项）
+    var all = {};
+    ctx.secs.forEach(function (sec) {
+        for (var q = sec.start; q < sec.start + sec.count; q++) all[q] = q;
+    });
+    if (!Object.keys(all).length && fallback) {
+        stus.forEach(function (s) {
+            Object.keys(s.per).forEach(function (rk) {
+                var ans = s.per[rk].ans || {};
+                Object.keys(ans).forEach(function (qk) {
+                    var q = parseInt(String(qk).replace(/[^0-9]/g, ''), 10);
+                    if (q > 0) all[q] = q;
+                });
+            });
+        });
+        Object.keys(all).forEach(function (q) {
+            var qk = String(q);
+            if (ctx.kind[qk] === undefined) ctx.kind[qk] = 'single';
+            if (ctx.opts[qk] === undefined) ctx.opts[qk] = 4;
+        });
+    }
+    return Object.keys(all).map(function (n) { return parseInt(n, 10); })
+        .sort(function (a, b) { return a - b; });
+}
+
+// ---- 成绩报表（dtype=project 的 omr 分支 / 批量共用）：6 张分表 ----
+function buildOmrProjectExport(project) {
+    var pid = parseInt(project.id, 10);
+    var ctx = omrAnswerCtx(pid, true);
+    var scored = ctx.scored;
+    var s_lbl = scored ? '得分' : '对题数';
+    var r_lbl = scored ? '得分率' : '正确率';
+    var rounds = roundsOf(pid);
+    var rname = {};
+    rounds.forEach(function (r) { var t = String(r.title || '').trim(); rname[r.no] = t !== '' ? t : '第' + r.no + '次'; });
+    var stus = omrExpStudents(project);
+    var byId = {};
+    stus.forEach(function (s) { byId[s.sid] = s; });
+    // 各题次成绩（同生同题次最新一条；score 空或 t<=0 跳过）
+    D.omr.filter(function (o) { return parseInt(o.project_id, 10) === pid && o.student_id != null && byId[o.student_id]; })
+        .sort(function (a, b) { return a.id - b.id; })
+        .forEach(function (o) {
+            var raw = String(o.score === null || o.score === undefined ? '' : o.score);
+            if (raw === '') return;
+            var sp = omrScoreParts(raw);
+            if (sp.t <= 0) return;
+            var ans = (function () { try { return JSON.parse(o.answers || 'null'); } catch (e) { return null; } })();
+            byId[o.student_id].per[parseInt(o.round_no, 10)] = { g: sp.g, t: sp.t, ans: (ans && typeof ans === 'object') ? ans : {} };
+        });
+    // 每生汇总（Σ得分÷Σ满分）
+    var tot = {};
+    stus.forEach(function (s) {
+        var sg = 0, stt = 0;
+        Object.keys(s.per).forEach(function (k) { var p = s.per[k]; sg += p.g; stt += p.t; });
+        tot[s.sid] = { g: sg, t: stt, rate: stt > 0 ? sg / stt * 100 : null };
+    });
+    function lv(rate) {
+        if (rate === null) return '';
+        if (rate >= 80) return '优秀';
+        if (rate >= 70) return '良好';
+        if (rate >= 60) return '及格';
+        return '不及格';
+    }
+    function bandIdx(rate) {
+        if (rate === null) return null;
+        return Math.min(9, Math.max(0, Math.floor(rate / 10)));
+    }
+    var bandLbl = [];
+    for (var b = 0; b < 10; b++) bandLbl[b] = (b * 10) + '%~' + ((b + 1) * 10) + '%';
+    function agg(pairs) {   // 一均三率（率制，个体率平均）
+        var n = pairs.length;
+        if (!n) return null;
+        var sg = 0, exc = 0, good = 0, pass = 0, low = 0, sumRate = 0;
+        pairs.forEach(function (p) {
+            sg += p.g;
+            if (p.rate >= 80) exc++;
+            if (p.rate >= 70 && p.rate < 80) good++;
+            if (p.rate >= 60) pass++;
+            if (p.rate < 30) low++;
+            sumRate += p.rate;
+        });
+        return { n: n, avg_g: omn(sg / n), avg_r: omn(sumRate / n),
+            exc: omn(exc / n * 100), good: omn(good / n * 100),
+            pass: omn(pass / n * 100), low: omn(low / n * 100) };
+    }
+    var clsNames = [];
+    stus.forEach(function (s) { if (clsNames.indexOf(s.class_name) < 0) clsNames.push(s.class_name); });
+    var allRankVals = {};
+    Object.keys(tot).forEach(function (sid) { if (tot[sid].rate !== null) allRankVals[sid] = tot[sid].rate; });
+    var allRank = rankOfObj(allRankVals);
+
+    // 表1：学生成绩
+    var head1 = ['班级', '座号', '姓名', '编号'];
+    rounds.forEach(function (r) { head1.push(rname[r.no] + '·' + s_lbl); head1.push(rname[r.no] + '·' + r_lbl + '(%)'); });
+    head1.push('总' + s_lbl);
+    head1.push(scored ? '总分值' : '总题数');
+    head1.push('总' + r_lbl + '(%)');
+    head1.push('总排名');
+    var rows1 = [head1];
+    stus.forEach(function (s) {
+        var row = [s.class_name, s.seat_no, s.name, s.student_no];
+        rounds.forEach(function (r) {
+            var p = s.per[r.no] || null;
+            row.push(p ? omn(p.g) : '');
+            row.push(p ? omn(p.g / p.t * 100) : '');
+        });
+        var t0 = tot[s.sid];
+        row.push(t0.t > 0 ? omn(t0.g) : '');
+        row.push(t0.t > 0 ? omn(t0.t) : '');
+        row.push(t0.rate !== null ? omn(t0.rate) : '');
+        row.push(allRank[s.sid] !== undefined ? String(allRank[s.sid]) : '');
+        rows1.push(row);
+    });
+
+    // 表2：一均三率及排名
+    var rows2 = [['范围', '实考人数', '平均' + s_lbl, '平均' + r_lbl + '(%)', '优秀率(≥80%)', '良好率(70%~80%)', '及格率(≥60%)', '低分率(<30%)']];
+    rounds.forEach(function (r) {
+        var pairs = [];
+        stus.forEach(function (s) {
+            var p = s.per[r.no];
+            if (p) pairs.push({ g: p.g, rate: p.g / p.t * 100 });
+        });
+        var a = agg(pairs);
+        rows2.push(a ? [rname[r.no], String(a.n), a.avg_g, a.avg_r, a.exc, a.good, a.pass, a.low]
+                     : [rname[r.no], '0', '', '', '', '', '', '']);
+    });
+    rows2.push(['— 按班级汇总（全部题次） —']);
+    clsNames.forEach(function (cn) {
+        var pairs = [];
+        stus.forEach(function (s) {
+            if (s.class_name !== cn) return;
+            if (tot[s.sid].rate !== null) pairs.push({ g: tot[s.sid].g, rate: tot[s.sid].rate });
+        });
+        var a = agg(pairs);
+        rows2.push(a ? [cn, String(a.n), a.avg_g, a.avg_r, a.exc, a.good, a.pass, a.low] : [cn, '0', '', '', '', '', '', '']);
+    });
+    (function () {
+        var pairs = [];
+        Object.keys(tot).forEach(function (sid) { var t0 = tot[sid]; if (t0.rate !== null) pairs.push({ g: t0.g, rate: t0.rate }); });
+        var a = agg(pairs);
+        rows2.push(a ? ['全部', String(a.n), a.avg_g, a.avg_r, a.exc, a.good, a.pass, a.low] : ['全部', '0', '', '', '', '', '', '']);
+    })();
+    rows2.push([]);
+    var head2 = ['班级', '座号', '姓名'];
+    rounds.forEach(function (r) { head2.push(rname[r.no] + '名次'); });
+    head2.push('总名次');
+    rows2.push(head2);
+    var ranks = {};
+    rounds.forEach(function (r) {
+        var vals = {};
+        stus.forEach(function (s) {
+            var p = s.per[r.no];
+            if (p) vals[s.sid] = p.g / p.t * 100;
+        });
+        ranks[r.no] = rankOfObj(vals);
+    });
+    stus.forEach(function (s) {
+        var row = [s.class_name, s.seat_no, s.name];
+        rounds.forEach(function (r) { var rk = ranks[r.no][s.sid]; row.push(rk !== undefined ? String(rk) : ''); });
+        row.push(allRank[s.sid] !== undefined ? String(allRank[s.sid]) : '');
+        rows2.push(row);
+    });
+
+    // 表3：学生等级
+    var head3 = ['班级', '座号', '姓名', '编号'];
+    rounds.forEach(function (r) { head3.push(rname[r.no]); });
+    head3.push('总评等级');
+    var rows3 = [head3];
+    stus.forEach(function (s) {
+        var row = [s.class_name, s.seat_no, s.name, s.student_no];
+        rounds.forEach(function (r) {
+            var p = s.per[r.no];
+            row.push(p ? lv(p.g / p.t * 100) : '');
+        });
+        row.push(lv(tot[s.sid].rate));
+        rows3.push(row);
+    });
+
+    // 表4：分数段统计
+    var head4 = ['分数段'];
+    rounds.forEach(function (r) { head4.push(rname[r.no] + '人数'); });
+    head4.push('汇总人数');
+    head4.push('汇总占比(%)');
+    var rows4 = [head4];
+    var nCls = stus.length, nScored = 0;
+    Object.keys(tot).forEach(function (sid) { if (tot[sid].rate !== null) nScored++; });
+    for (var bb = 9; bb >= 0; bb--) {
+        var row4 = [bandLbl[bb]];
+        rounds.forEach(function (r) {
+            var c = 0;
+            stus.forEach(function (s) {
+                var p = s.per[r.no];
+                if (p && bandIdx(p.g / p.t * 100) === bb) c++;
+            });
+            row4.push(String(c));
+        });
+        var c2 = 0;
+        Object.keys(tot).forEach(function (sid) { if (tot[sid].rate !== null && bandIdx(tot[sid].rate) === bb) c2++; });
+        row4.push(String(c2));
+        row4.push(nScored > 0 ? omn(c2 / nScored * 100) : '');
+        rows4.push(row4);
+    }
+    var rowN = ['未批改'];
+    rounds.forEach(function (r) {
+        var c = 0;
+        stus.forEach(function (s) { if (!s.per[r.no]) c++; });
+        rowN.push(String(c));
+    });
+    rowN.push(String(nCls - nScored));
+    rowN.push(nCls > 0 ? omn((nCls - nScored) / nCls * 100) : '');
+    rows4.push(rowN);
+
+    // 表5：客观题统计（仅存在答案键题时输出）
+    var allQs = omrAllQs(ctx, stus, true);
+    var rows5 = [];
+    var hasKeyQ = false;
+    allQs.forEach(function (q) { if (ctx.key[String(q)]) hasKeyQ = true; });
+    if (hasKeyQ) {
+        var head5 = ['次数', '题号', '题型', '题组', '参考人数', '作答人数', '正确答案'];
+        var maxOpts = 2;
+        allQs.forEach(function (q) { var o = parseInt(ctx.opts[String(q)], 10) || 4; if (o > maxOpts) maxOpts = o; });
+        for (var li = 0; li < maxOpts; li++) {
+            var ch0 = 'ABCDE'.charAt(li);
+            head5.push('选' + ch0 + '人数');
+            head5.push('选' + ch0 + '率(%)');
+        }
+        head5.push('答对人数', '答对率(%)', '得分率(%)', '难度', '未涂率(%)');
+        rows5.push(head5);
+        rounds.forEach(function (r) {
+            var rno = r.no;
+            allQs.forEach(function (q) {
+                var qk = String(q);
+                if (!ctx.key[qk]) return;
+                var dist = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+                var answered = 0, correct = 0, nStu = 0, sg = 0, sfull = 0;
+                stus.forEach(function (s) {
+                    var p = s.per[rno];
+                    if (!p) return;
+                    nStu++;
+                    var sel = omrSel(p.ans, q);
+                    if (sel === '') return;
+                    answered++;
+                    sel.split('').forEach(function (ch) { if (dist[ch] !== undefined) dist[ch]++; });
+                    if (omrIsCorrect(ctx, sel, q)) {
+                        correct++;
+                        sg += parseFloat(ctx.pts[qk] || 1);
+                    }
+                    if (ctx.pts[qk] !== undefined) sfull += parseFloat(ctx.pts[qk]);
+                });
+                if (!nStu) return;
+                var secTitle = '—';
+                for (var si = 0; si < ctx.secs.length; si++) {
+                    var sec = ctx.secs[si];
+                    if (q >= sec.start && q < sec.start + sec.count) { secTitle = sec.title !== '' ? sec.title : '题组'; break; }
+                }
+                var opts = parseInt(ctx.opts[qk], 10) || 4;
+                var row5 = [rname[rno], q, (ctx.kind[qk] || 'single') === 'multi' ? '多选' : '单选',
+                    secTitle, nStu, answered, ctx.key[qk]];
+                for (var li2 = 0; li2 < maxOpts; li2++) {
+                    var ch = 'ABCDE'.charAt(li2);
+                    if (li2 < opts) {
+                        row5.push(dist[ch]);
+                        row5.push(omn(dist[ch] / nStu * 100));
+                    } else { row5.push(''); row5.push(''); }
+                }
+                var rateQ = correct / nStu * 100;
+                row5.push(correct);
+                row5.push(omn(rateQ));
+                row5.push((scored && sfull > 0) ? omn(sg / sfull * 100) : omn(rateQ));
+                row5.push((scored && sfull > 0) ? omn(sg / sfull) : omn(rateQ / 100));
+                row5.push(omn((nStu - answered) / nStu * 100));
+                rows5.push(row5);
+            });
+        });
+    }
+
+    // 表6：每生每题作答明细
+    var rows6 = [];
+    if (allQs.length) {
+        var head6 = ['班级', '座号', '姓名', '编号', '次数', '总' + s_lbl];
+        allQs.forEach(function (q) { head6.push('第' + q + '题'); });
+        rows6.push(head6);
+        stus.forEach(function (s) {
+            rounds.forEach(function (r) {
+                var p = s.per[r.no];
+                if (!p) return;
+                var row6 = [s.class_name, s.seat_no, s.name, s.student_no, rname[r.no], omn(p.g) + '/' + omn(p.t)];
+                allQs.forEach(function (q) {
+                    var sel = omrSel(p.ans, q);
+                    if (sel === '') { row6.push(''); return; }
+                    row6.push(sel + (omrIsCorrect(ctx, sel, q) ? '✓' : ((ctx.key[String(q)] || '') !== '' ? '✗' : '')));
+                });
+                rows6.push(row6);
+            });
+        });
+    }
+    return { kind: 'omr', sheets: [
+        { name: '学生成绩', rows: rows1 },
+        { name: '一均三率及排名', rows: rows2 },
+        { name: '学生等级', rows: rows3 },
+        { name: '分数段统计', rows: rows4 },
+        { name: '客观题统计', rows: rows5 },
+        { name: '每生每题作答明细', rows: rows6 }
+    ] };
+}
+
+// ---- 每生每题作答明细行（dtype=omr_answers：不要求已批改） ----
+function buildOmrAnswersRows(project) {
+    var pid = parseInt(project.id, 10);
+    var ctx = omrAnswerCtx(pid, false);
+    var stus = omrExpStudents(project);
+    var byId = {};
+    stus.forEach(function (s) { byId[s.sid] = s; });
+    D.omr.filter(function (o) { return parseInt(o.project_id, 10) === pid && o.student_id != null && byId[o.student_id]; })
+        .sort(function (a, b) { return a.id - b.id; })
+        .forEach(function (o) {
+            var aRaw = String(o.answers === null || o.answers === undefined ? '' : o.answers);
+            if (aRaw === '' || aRaw === 'null') return;
+            var ans = (function () { try { return JSON.parse(aRaw); } catch (e) { return null; } })();
+            var rawScore = String(o.score === null || o.score === undefined ? '' : o.score);
+            var sp = omrScoreParts(rawScore);
+            var fmt = rawScore.trim() !== '' ? omn(sp.g) + (sp.two ? '/' + omn(sp.t) : '') : '';
+            byId[o.student_id].per[parseInt(o.round_no, 10)] = { score: fmt, ans: (ans && typeof ans === 'object') ? ans : {} };
+        });
+    var allQs = omrAllQs(ctx, stus, false);   // 无作答兜底（同蓝本）
+    var rounds = roundsOf(pid);
+    var rname = {};
+    rounds.forEach(function (r) { var t = String(r.title || '').trim(); rname[r.no] = t !== '' ? t : '第' + r.no + '次'; });
+    var rows = [['班级', '座号', '姓名', '编号', '次数', '总得分']];
+    allQs.forEach(function (q) { rows[0].push('第' + q + '题'); });
+    stus.forEach(function (s) {
+        rounds.forEach(function (r) {
+            var p = s.per[r.no];
+            if (!p) return;
+            var row = [s.class_name, s.seat_no, s.name, s.student_no, rname[r.no], p.score !== '' ? p.score : '未批改'];
+            allQs.forEach(function (q) {
+                var sel = omrSel(p.ans, q);
+                if (sel === '') { row.push(''); return; }
+                row.push(sel + (omrIsCorrect(ctx, sel, q) ? '✓' : ((ctx.key[String(q)] || '') !== '' ? '✗' : '')));
+            });
+            rows.push(row);
+        });
+    });
+    return rows;
+}
+
+// ---- 统计报表四分表（dtype=omr_report：多次汇总/班级对比/学生个人/逐题分析） ----
+function buildOmrReportSheets(project) {
+    var pid = parseInt(project.id, 10);
+    var rounds = roundsOf(pid);
+    if (!rounds.length) return null;
+    var rname = {};
+    rounds.forEach(function (r) { rname[r.no] = String(r.title || '') !== '' ? String(r.title) : '第' + r.no + '次'; });
+    var clsIds = [];
+    projectClassIds(project).forEach(function (c) { var ci = parseInt(c, 10); if (clsIds.indexOf(ci) < 0) clsIds.push(ci); });
+    var classes = {};
+    D.classes.forEach(function (c) { if (!c.deleted_at && clsIds.indexOf(c.id) >= 0) classes[c.id] = String(c.name || ''); });
+    var stuList = D.students.filter(function (s) { return clsIds.indexOf(s.class_id) >= 0 && s.disabled != 1; })
+        .sort(function (a, b) { return a.class_id - b.class_id || seatCmp(a, b); })
+        .map(function (s) {
+            return { id: s.id, name: String(s.name || ''), seat_no: String(s.seat_no || ''), student_no: String(s.student_no || ''),
+                class_id: s.class_id, class_name: classes[s.class_id] || ('班级#' + s.class_id) };
+        });
+    var students = {};
+    stuList.forEach(function (s) { students[s.id] = s; });
+    // 识别结果（每生每题次最新一条；未批改行 t=0 不参与统计）
+    var rows = {};
+    D.omr.filter(function (o) { return parseInt(o.project_id, 10) === pid && o.student_id != null && students[o.student_id]; })
+        .sort(function (a, b) { return a.id - b.id; })
+        .forEach(function (o) {
+            var ans = (function () { try { return JSON.parse(o.answers || 'null'); } catch (e) { return null; } })();
+            if (!ans || typeof ans !== 'object') ans = {};
+            var parts = String(o.score === null || o.score === undefined ? '' : o.score).split('/');
+            var g = 0, t = 0;
+            if (parts.length === 2 && (parseFloat(parts[1]) || 0) > 0) { g = parseFloat(parts[0]) || 0; t = parseFloat(parts[1]) || 0; }
+            var rn = parseInt(o.round_no, 10);
+            rows[rn] = rows[rn] || {};
+            rows[rn][o.student_id] = { answers: ans, g: g, t: t };
+        });
+    var ctx = omrAnswerCtx(pid, false);
+    var sheets = [];
+    // Sheet1 多次汇总
+    var r1 = [['次数', '标题', '参考人数', '平均分', '平均得分率(%)', '最高分', '最低分', '优秀率≥80%(%)', '及格率≥60%(%)', '低分率<30%(%)', '满分人数', '零分人数']];
+    rounds.forEach(function (r) {
+        var a = omrAgg(rows[r.no] || {});
+        if (!a) return;
+        r1.push(['第' + r.no + '次', r.title, a.n, a.avg, a.rate, a.max, a.min, a.ex, a.pa, a.low, a.full, a.zero]);
+    });
+    if (r1.length > 1) sheets.push({ name: '多次汇总', rows: r1 });
+    // Sheet2 班级对比
+    var r2 = [];
+    var hdr2 = ['次数', '范围', '人数', '平均分', '平均得分率(%)', '优秀率≥80%(%)', '及格率≥60%(%)', '低分率<30%(%)', '超均率(%)'];
+    rounds.forEach(function (r) {
+        var set = rows[r.no] || {};
+        var all = omrAgg(set);
+        if (!all) return;
+        if (!r2.length) r2.push(hdr2);
+        r2.push(['第' + r.no + '次', '全体', all.n, all.avg, all.rate, all.ex, all.pa, all.low, '']);
+        clsIds.forEach(function (cid) {
+            if (classes[cid] === undefined) return;
+            var subset = [];
+            Object.keys(set).forEach(function (sid) {
+                if (students[sid].class_id == cid) subset.push(set[sid]);
+            });
+            var a = omrAgg(subset);
+            if (!a) return;
+            var over = all.rate > 0 ? Math.round((a.rate - all.rate) / all.rate * 1000) / 10 : null;
+            r2.push(['第' + r.no + '次', classes[cid], a.n, a.avg, a.rate, a.ex, a.pa, a.low, over]);
+        });
+    });
+    if (r2.length > 1) sheets.push({ name: '班级对比', rows: r2 });
+    // Sheet3 学生个人
+    var stuRate = {}, clsAvg = {}, clsRank = {};
+    stuList.forEach(function (s) {
+        var g = 0, t = 0;
+        rounds.forEach(function (r) {
+            var rr = (rows[r.no] || {})[s.id];
+            if (rr && rr.t > 0) { g += rr.g; t += rr.t; }
+        });
+        if (t > 0) stuRate[s.id] = Math.round(g / t * 1000) / 10;
+    });
+    Object.keys(stuRate).forEach(function (sid) {
+        var cid = students[sid].class_id;
+        if (!clsAvg[cid]) clsAvg[cid] = [];
+        clsAvg[cid].push(stuRate[sid]);
+    });
+    Object.keys(clsAvg).forEach(function (cid) {
+        var arr = clsAvg[cid];
+        clsAvg[cid] = arr.length ? Math.round(arr.reduce(function (a, b) { return a + b; }, 0) / arr.length * 1000) / 10 : 0;
+    });
+    (function () {
+        var bycls = {};
+        Object.keys(stuRate).forEach(function (sid) {
+            var cid = students[sid].class_id;
+            if (!bycls[cid]) bycls[cid] = {};
+            bycls[cid][sid] = stuRate[sid];
+        });
+        Object.keys(bycls).forEach(function (cid) {
+            var m = bycls[cid];
+            var sids = Object.keys(m).sort(function (a, b) { return m[b] - m[a] || (parseInt(a, 10) - parseInt(b, 10)); });
+            clsRank[cid] = {};
+            var i = 0, prevRate = null, prevRank = 0;
+            sids.forEach(function (sid) {
+                i++;
+                var rk = (m[sid] === prevRate && prevRank > 0) ? prevRank : i;
+                clsRank[cid][sid] = rk;
+                prevRate = m[sid]; prevRank = rk;
+            });
+        });
+    })();
+    var r3 = [['班级', '座号', '姓名', '编号']];
+    rounds.forEach(function (r) { r3[0].push(rname[r.no] + '得分'); r3[0].push(rname[r.no] + '得分率(%)'); });
+    r3[0].push('总体得分率(%)', '等级', '班名', '超均率(%)');
+    stuList.forEach(function (s) {
+        var rate = stuRate[s.id];
+        if (rate === undefined) return;
+        var row = [s.class_name, s.seat_no, s.name, s.student_no];
+        rounds.forEach(function (r) {
+            var rr = (rows[r.no] || {})[s.id];
+            if (rr && rr.t > 0) { row.push(omn(rr.g) + '/' + omn(rr.t)); row.push(Math.round(rr.g / rr.t * 1000) / 10); }
+            else { row.push(''); row.push(''); }
+        });
+        var cavg = clsAvg[s.class_id] || 0;
+        row.push(rate);
+        row.push(rate >= 80 ? 'A' : (rate >= 70 ? 'B' : (rate >= 60 ? 'C' : 'D')));
+        row.push(clsRank[s.class_id] && clsRank[s.class_id][s.id] !== undefined ? clsRank[s.class_id][s.id] : '');
+        row.push(cavg > 0 ? Math.round((rate - cavg) / cavg * 1000) / 10 : '');
+        r3.push(row);
+    });
+    if (r3.length > 1) sheets.push({ name: '学生个人', rows: r3 });
+    // Sheet4 逐题分析
+    var r4 = [['次数', '题号', '题型', '题组', '参与人数', '作答人数', '正确答案', '答对人数', '正确率(%)',
+        '选A人数', '选B人数', '选C人数', '选D人数', '选E人数']];
+    rounds.forEach(function (r) {
+        var set = rows[r.no] || {};
+        var setArr = Object.keys(set).map(function (k) { return set[k]; });
+        if (!setArr.length) return;
+        ctx.secs.forEach(function (sec) {
+            for (var q = sec.start; q < sec.start + sec.count; q++) {
+                var qk = String(q);
+                var dist = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+                var correct = 0, answered = 0;
+                var kk = ctx.key[qk] || '';
+                setArr.forEach(function (rr) {
+                    var sel = String((rr.answers && rr.answers[qk]) || '').replace(/[^A-E]/g, '').toUpperCase();
+                    if (sel === '') return;
+                    answered++;
+                    sel.split('').forEach(function (ch) { if (dist[ch] !== undefined) dist[ch]++; });
+                    if (kk === '') return;
+                    var ok = ((ctx.kind[qk] || sec.kind) === 'multi')
+                        ? sel.split('').every(function (ch) { return kk.split('').indexOf(ch) >= 0; })
+                        : (sel === kk);
+                    if (ok) correct++;
+                });
+                r4.push(['第' + r.no + '次', q, ((ctx.kind[qk] || sec.kind) === 'multi' ? '多选' : '单选'), sec.title,
+                    setArr.length, answered, kk, correct, (correct > 0 ? Math.round(correct / setArr.length * 1000) / 10 : 0),
+                    dist.A, dist.B, dist.C, dist.D, dist.E]);
+            }
+        });
+    });
+    if (r4.length > 1) sheets.push({ name: '逐题分析', rows: r4 });
+    return sheets.length ? sheets : null;
+}
+
+// ---- 项目通用导出（dtype=project / 批量共用）：omr→6表、daily→3表、count→CSV 行 ----
+function projectDailyData(pid, clsIds, from, to) {
+    var dates = [], map = {};
+    if (!clsIds.length) return { dates: dates, map: map };
+    var clsSet = {};
+    clsIds.forEach(function (c) { clsSet[parseInt(c, 10)] = true; });
+    var sidCls = {};
+    D.students.forEach(function (s) { sidCls[s.id] = s.class_id; });
+    D.record_days.filter(function (rd) {
+        return parseInt(rd.project_id, 10) === pid && clsSet[sidCls[rd.student_id]];
+    })
+    .sort(function (a, b) { return String(a.reg_date) < String(b.reg_date) ? -1 : 1; })
+    .forEach(function (rd) {
+        var d = String(rd.reg_date);
+        if (from !== '' && d < from) return;
+        if (to !== '' && d > to) return;
+        if (dates.indexOf(d) < 0) dates.push(d);
+        if (!map[rd.student_id]) map[rd.student_id] = {};
+        map[rd.student_id][d] = String(rd.created_at === null || rd.created_at === undefined ? '' : rd.created_at);
+    });
+    return { dates: dates, map: map };
+}
+function regInRange(at, from, to) {   // 一次性项目登记是否落在范围内（含端点；to 含当天）
+    if (from === '' && to === '') return true;
+    at = String(at === null || at === undefined ? '' : at);
+    if (at === '') return false;
+    if (from !== '' && at < from) return false;
+    if (to !== '') {
+        var t = new Date(to + 'T00:00:00');
+        t.setDate(t.getDate() + 1);
+        function p2(n) { return n < 10 ? '0' + n : '' + n; }
+        var lim = t.getFullYear() + '-' + p2(t.getMonth() + 1) + '-' + p2(t.getDate());
+        if (at >= lim) return false;
+    }
+    return true;
+}
+function buildProjectExport(project, from, to) {
+    if (project.mode === 'omr') return buildOmrProjectExport(project);
+    var pid = parseInt(project.id, 10);
+    var clsIds = projectClassIds(project);
+    var clsSet = {};
+    clsIds.forEach(function (c) { clsSet[parseInt(c, 10)] = true; });
+    var clsName = {};
+    D.classes.forEach(function (c) { if (clsSet[c.id]) clsName[c.id] = String(c.name || ''); });
+    // 学生（含禁用，与蓝本一致）
+    var students = D.students.filter(function (s) { return clsSet[s.class_id]; })
+        .sort(function (a, b) { return a.class_id - b.class_id || seatCmp(a, b); })
+        .map(function (s) {
+            return { sid: s.id, class_name: clsName[s.class_id] || ('班级#' + s.class_id), seat_no: String(s.seat_no || ''),
+                name: String(s.name || ''), student_no: String(s.student_no || '') };
+        });
+    var recMapP = {};
+    D.records.forEach(function (r) { if (parseInt(r.project_id, 10) === pid) recMapP[r.student_id] = r; });
+    if ((project.mode || 'count') === 'daily') {
+        var dd = projectDailyData(pid, clsIds, from, to);
+        var dates = dd.dates, dmap = dd.map;
+        var head = ['班级', '座号', '姓名', '编号'];
+        var regRows = [head.slice()], timeRows = [head.slice()], evalRows = [head.slice()];
+        dates.forEach(function (d) { regRows[0].push(d); timeRows[0].push(d); });
+        students.forEach(function (s) {
+            var base = [s.class_name, s.seat_no, s.name, s.student_no];
+            var reg = base.slice(), time = base.slice();
+            dates.forEach(function (d) {
+                var has = dmap[s.sid] && dmap[s.sid][d] !== undefined;
+                reg.push(has ? '✓' : '');
+                time.push(has ? dmap[s.sid][d] : '');
+            });
+            var rec = recMapP[s.sid];
+            regRows.push(reg);
+            timeRows.push(time);
+            evalRows.push(base.concat([rec && rec.eval_value ? String(rec.eval_value) : '']));
+        });
+        return { kind: 'daily', sheets: [
+            { name: '是否登记', rows: regRows },
+            { name: '登记时间', rows: timeRows },
+            { name: '评价内容', rows: evalRows }
+        ] };
+    }
+    var rows = [['班级', '座号', '姓名', '编号', '是否登记', '登记时间', '评价内容']];
+    students.forEach(function (s) {
+        var rec = recMapP[s.sid];
+        var regOk = rec && rec.registered == 1 && regInRange(rec.registered_at, from, to);
+        rows.push([
+            s.class_name,
+            s.seat_no,
+            s.name,
+            s.student_no,
+            regOk ? '已登记' : '未登记',
+            regOk ? String(rec.registered_at || '') : '',
+            rec && rec.eval_value ? String(rec.eval_value) : ''
+        ]);
+    });
+    return { kind: 'count', rows: rows };
+}
+
+// ---- 下载入口（stats 页各视图按钮） ----
+function findProject(pid) {
+    return D.projects.filter(function (p) { return parseInt(p.id, 10) === pid && !p.deleted_at; })[0] || null;
+}
+function expProject(pid) {
+    var p = findProject(parseInt(pid, 10));
+    if (!p) { showToast('项目不存在', 'error'); return; }
+    var date = stamp();
+    var exp = buildProjectExport(p, '', '');
+    if (exp.kind === 'omr') { outputExcelXml('成绩报表_' + p.name + '_' + date + '.xls', exp.sheets); return; }
+    if (exp.kind === 'daily') { outputExcelXml('项目导出_' + p.name + '_' + date + '.xls', exp.sheets); return; }
+    outputCsv('项目导出_' + p.name + '_' + date + '.csv', exp.rows);
+}
+function expProjectDaily(pid) {
+    var p = findProject(parseInt(pid, 10));
+    if (!p) { showToast('项目不存在', 'error'); return; }
+    if ((p.mode || 'count') !== 'daily') { showToast('仅打卡模式项目支持每日打卡明细导出', 'error'); return; }
+    var pid2 = parseInt(p.id, 10);
+    var clsIds = projectClassIds(p);
+    var clsSet = {};
+    clsIds.forEach(function (c) { clsSet[parseInt(c, 10)] = true; });
+    var clsName = {};
+    D.classes.forEach(function (c) { if (clsSet[c.id]) clsName[c.id] = String(c.name || ''); });
+    var stuMap = {};
+    D.students.forEach(function (s) { stuMap[s.id] = s; });
+    var list = D.record_days.filter(function (rd) {
+            return parseInt(rd.project_id, 10) === pid2 && stuMap[rd.student_id] && clsSet[stuMap[rd.student_id].class_id];
+        }).map(function (rd) {
+            var s = stuMap[rd.student_id];
+            return { rd: rd, cid: s.class_id, seat: seatNum(s.seat_no), sid: s.id };
+        });
+    list.sort(function (a, b) {
+        return String(a.rd.reg_date) < String(b.rd.reg_date) ? -1
+            : (String(a.rd.reg_date) > String(b.rd.reg_date) ? 1 : (a.cid - b.cid || a.seat - b.seat || a.sid - b.sid));
+    });
+    var rows = [['班级', '座号', '姓名', '编号', '项目', '打卡日期', '打卡时间']];
+    list.forEach(function (x) {
+        var s = stuMap[x.rd.student_id];
+        rows.push([clsName[x.cid] || ('班级#' + x.cid), String(s.seat_no || ''), String(s.name || ''), String(s.student_no || ''),
+            p.name, String(x.rd.reg_date), String(x.rd.created_at || '')]);
+    });
+    outputCsv('每日打卡明细_' + p.name + '_' + stamp() + '.csv', rows);
+}
+function expOmrReport(pid) {
+    var p = findProject(parseInt(pid, 10));
+    if (!p) { showToast('项目不存在', 'error'); return; }
+    if (p.mode !== 'omr') { showToast('非答题卡模式项目，无统计报表', 'error'); return; }
+    var sheets = buildOmrReportSheets(p);
+    if (!sheets) { showToast('暂无统计数据，请先识别或录入并配置答案', 'error'); return; }
+    outputExcelXml('统计报表_' + p.name + '_' + stamp() + '.xls', sheets);
+}
+function expOmrAnswers(pid) {
+    var p = findProject(parseInt(pid, 10));
+    if (!p) { showToast('项目不存在', 'error'); return; }
+    if (p.mode !== 'omr') { showToast('非答题卡模式项目，无作答明细', 'error'); return; }
+    var rows = buildOmrAnswersRows(p);
+    if (rows.length <= 1) { showToast('暂无作答数据，请先识别或录入', 'error'); return; }
+    outputExcelXml('作答明细_' + p.name + '_' + stamp() + '.xls', [{ name: '每生每题作答明细', rows: rows }]);
+}
+function expStudentDetail(sid) {
+    sid = parseInt(sid, 10);
+    var stu = D.students.filter(function (s) { return s.id === sid && s.class_id === CLASS_ID; })[0];
+    if (!stu) { showToast('学生不存在', 'error'); return; }
+    // 本班项目（id DESC，同蓝本学生统计口径）
+    var projects = D.projects.filter(function (p) { return parseInt(p.class_id, 10) === CLASS_ID && !p.deleted_at; })
+        .sort(function (a, b) { return b.id - a.id; });
+    var pids = projects.map(function (p) { return parseInt(p.id, 10); });
+    var datesMap = {}, dmap = {}, recMap3 = {};
+    var sidCls = {};
+    D.students.forEach(function (s) { sidCls[s.id] = s.class_id; });
+    pids.forEach(function (pid) { datesMap[pid] = []; });
+    D.record_days.filter(function (rd) {
+        return pids.indexOf(parseInt(rd.project_id, 10)) >= 0 && sidCls[rd.student_id] === CLASS_ID;
+    })
+    .sort(function (a, b) { return String(a.reg_date) < String(b.reg_date) ? -1 : 1; })
+    .forEach(function (rd) {
+        var pid = parseInt(rd.project_id, 10), d = String(rd.reg_date);
+        if (datesMap[pid].indexOf(d) < 0) datesMap[pid].push(d);
+        if (!dmap[pid]) dmap[pid] = {};
+        if (!dmap[pid][rd.student_id]) dmap[pid][rd.student_id] = {};
+        dmap[pid][rd.student_id][d] = String(rd.created_at || '');
+    });
+    D.records.forEach(function (r) {
+        var pid = parseInt(r.project_id, 10);
+        if (pids.indexOf(pid) >= 0 && sidCls[r.student_id] === CLASS_ID) {
+            if (!recMap3[pid]) recMap3[pid] = {};
+            recMap3[pid][r.student_id] = r;
+        }
+    });
+    var regRows = [['项目', '日期', '是否登记']];
+    var timeRows = [['项目', '日期', '登记时间']];
+    var evalRows = [['项目', '评价内容']];
+    projects.forEach(function (p) {
+        var pid = parseInt(p.id, 10);
+        var rec = (recMap3[pid] || {})[sid] || null;
+        if (p.mode === 'daily') {
+            (datesMap[pid] || []).forEach(function (d) {
+                var has = dmap[pid] && dmap[pid][sid] && dmap[pid][sid][d] !== undefined;
+                regRows.push([p.name, d, has ? '✓' : '']);
+                timeRows.push([p.name, d, has ? dmap[pid][sid][d] : '']);
+            });
+        } else {
+            regRows.push([p.name, '', rec && rec.registered == 1 ? '已登记' : '未登记']);
+            timeRows.push([p.name, '', rec && rec.registered == 1 && rec.registered_at ? String(rec.registered_at) : '']);
+        }
+        evalRows.push([p.name, rec && rec.eval_value !== null && rec.eval_value !== undefined ? String(rec.eval_value) : '']);
+    });
+    outputExcelXml('学生登记情况_' + String(stu.name || '') + '_' + stamp() + '.xls', [
+        { name: '是否登记', rows: regRows },
+        { name: '登记时间', rows: timeRows },
+        { name: '评价内容', rows: evalRows }
+    ]);
+}
+function exportProjects() {   // 班级总览勾选项目 → 批量 ZIP（单文件直下；无 JSZip 兜底合并工作簿）
+    var ids = Array.prototype.map.call(document.querySelectorAll('.proj-ck:checked'), function (c) { return parseInt(c.value, 10); });
+    if (!ids.length) { showToast('请先勾选要导出的项目', 'error'); return; }
+    var date = stamp();
+    var files = [], merged = [], okList = [], noList = [], usedNames = {};
+    ids.forEach(function (pid) {
+        var p = findProject(pid);
+        if (!p) { noList.push('项目 ' + pid + '（不存在或无导出权限）'); return; }
+        var exp = buildProjectExport(p, '', '');
+        var sheets = exp.kind === 'count' ? [{ name: '登记明细', rows: exp.rows }] : exp.sheets;
+        var name = '项目导出_' + p.name + '_' + date + '.xls';
+        if (usedNames[name]) name = name.replace(/\.xls$/, '_' + pid + '.xls');
+        usedNames[name] = true;
+        files.push({ name: name, content: excelXmlString(sheets) });
+        sheets.forEach(function (sh) { merged.push({ name: p.name + '·' + sh.name, rows: sh.rows }); });
+        okList.push(p.name + '（' + sheets.length + '张表）');
+    });
+    if (!files.length) { showToast('选中的项目均无可导出数据' + (noList.length ? '：' + noList.join('；') : ''), 'error'); return; }
+    if (files.length === 1) { downloadBlob(files[0].name, new Blob([files[0].content], { type: 'application/vnd.ms-excel;charset=utf-8' })); return; }
+    if (typeof JSZip !== 'undefined') {
+        var zip = new JSZip();
+        var readme = '项目批量导出\r\n生成时间：' + nowLabel() + '\r\n统计范围：全部时间\r\n'
+            + '包含项目（' + okList.length + '）：' + okList.join('；') + '\r\n'
+            + (noList.length ? ('未包含：' + noList.join('；') + '\r\n') : '');
+        zip.file('导出说明.txt', '\uFEFF' + readme);
+        files.forEach(function (f) { zip.file(f.name, f.content); });
+        zip.generateAsync({ type: 'blob' }).then(function (blob) {
+            downloadBlob('项目批量导出_' + date + '.zip', blob);
+        });
+        return;
+    }
+    outputExcelXml('项目批量合并导出_' + date + '.xls', merged);
+}
+
+// ===== 启动：载入数据 → 推导路由 → 渲染 =====
+function route() {
+    if (EMBED) {
+        document.querySelectorAll('.navbar, .bottom-nav, .side-drawer, .drawer-mask').forEach(function (el) { el.style.display = 'none'; });
+    }
+    // 班级推导（导航剥离后 URL 可能仅带 project_id）
+    if (CLASS_ID <= 0 && PROJECT_ID > 0) {
+        var p0 = D.projects.filter(function (p) { return parseInt(p.id, 10) === PROJECT_ID && !p.deleted_at; })[0];
+        if (p0) {
+            var cids = projectClassIds(p0);
+            if (cids.length) CLASS_ID = cids[0];
+        }
+    }
+    if (CLASS_ID <= 0) { location.replace('export.html'); return; }
+    CLASS = D.classes.filter(function (c) { return c.id === CLASS_ID && !c.deleted_at; })[0] || null;
+    if (!CLASS) { location.replace('export.html'); return; }
+    TOTAL_STUDENTS = D.students.filter(function (s) { return s.class_id === CLASS_ID; }).length;
+    VIEW = STUDENT_ID > 0 ? 'student' : (PROJECT_ID > 0 ? 'project' : 'class');
+    NAV_ONLY_PROJ = (VIEW !== 'class' && QS_CLASS_ID <= 0 && PROJECT_ID > 0);
+    if (VIEW === 'project') {
+        var p = D.projects.filter(function (x) { return parseInt(x.id, 10) === PROJECT_ID && !x.deleted_at; })[0];
+        if (!p || projectClassIds(p).indexOf(CLASS_ID) < 0) { location.replace('stats.html?class_id=' + CLASS_ID); return; }
+        PV = computeProject(p);
+        renderProject();
+    } else if (VIEW === 'student') {
+        var stu = D.students.filter(function (s) { return s.id === STUDENT_ID && s.class_id === CLASS_ID; })[0];
+        if (!stu) { location.replace('stats.html?class_id=' + CLASS_ID); return; }
+        SV = computeStudent(stu);
+        renderStudent();
+    } else {
+        renderClass();
+    }
+    setBackLink();
+    // 导航 data-cid 链接补全（跳转目标恢复为对应班级上下文）
+    document.querySelectorAll('a[data-cid]').forEach(function (a) {
+        a.href = a.getAttribute('data-href').replace('{cid}', CLASS_ID);
+    });
+}
+function boot() {
+    Promise.all([
+        DB.all('classes'), DB.all('students'), DB.all('projects'), DB.all('records'),
+        DB.all('record_days'), DB.all('project_rounds'), DB.all('record_rounds'),
+        DB.all('omr_results'), DB.all('omr_templates'), DB.all('omr_answers'),
+        DB.all('student_comments'), DB.all('settings')
+    ]).then(function (res) {
+        D.classes = res[0]; D.students = res[1]; D.projects = res[2]; D.records = res[3];
+        D.record_days = res[4]; D.rounds = res[5]; D.rr = res[6];
+        D.omr = res[7]; D.omrTpl = res[8]; D.omrAns = res[9];
+        D.comments = res[10];
+        D.settings = {};
+        (res[11] || []).forEach(function (s) { D.settings[s.skey] = s.svalue; });
+        D.recMap = {};
+        D.records.forEach(function (r) {
+            var pid = parseInt(r.project_id, 10);
+            if (!D.recMap[pid]) D.recMap[pid] = {};
+            D.recMap[pid][r.student_id] = r;
+        });
+        D.roundTitles = {};
+        D.rounds.forEach(function (r) {
+            var pid = parseInt(r.project_id, 10);
+            if (!D.roundTitles[pid]) D.roundTitles[pid] = {};
+            D.roundTitles[pid][r.round_no] = String(r.title || '');
+        });
+        D.projectsC = D.projects.filter(function (p) { return !p.deleted_at && parseInt(p.class_id, 10) === CLASS_ID; })
+            .sort(function (a, b) { return b.id - a.id; });
+        route();
+    }).catch(function (e) {
+        var root = document.getElementById('viewRoot');
+        if (root) root.innerHTML = '<div class="empty">数据加载失败：' + esc(String(e && e.message || e)) + '</div>';
+    });
+}
+boot();
+</script>
+</div>
+<style>
+.help-fab { position: fixed; top: 70px; right: 16px; z-index: 1100; width: 38px; height: 38px;
+    border-radius: 50%; border: none; background: #667eea; color: #fff; font-size: 20px; font-weight: bold;
+    cursor: pointer; box-shadow: 0 2px 10px rgba(102,126,234,0.45); }
+.help-fab:hover { background: #5568d3; }
+.help-body h4 { margin: 14px 0 6px; font-size: 14px; color: #667eea; }
+.help-body ul { margin: 0 0 8px; padding-left: 20px; }
+.help-body li { font-size: 13px; color: #555; line-height: 1.9; }
+</style>
+<button type="button" class="help-fab" onclick="togglePageHelp(true)" title="操作帮助" aria-label="操作帮助">?</button>
+<div class="modal-mask" id="pageHelpModal" onclick="if(event.target===this)togglePageHelp(false)">
+    <div class="modal" style="max-width:640px;">
+        <h3>❓ 登记统计 · 操作帮助</h3>
+        <div class="help-body">
+                        <h4>三种视图</h4>
+            <ul>
+                <li><b>班级总览</b>（stats.html?class_id=班级）：「各项目登记情况」按 📅 打卡项目 / 📌 一次性项目 分组列表，展示打卡天数 / 人次 / 人数或已登记 / 未登记 / 登记率</li><li><b>单项目统计</b>（点击项目行的「📊 单项统计」）：打卡项目显示每日打卡情况表与打卡天数 / 人次 / 去重人数汇总和每生打卡天数图表；一次性项目显示登记状态分布与学生明细</li><li><b>学生统计</b>（点击学生姓名或在统计报表中心进入）：该生各项目登记 / 评价 / 累计打卡天数明细</li>            </ul>
+                        <h4>导出</h4>
+            <ul>
+                <li>班级总览：表格首列勾选项目后点「⬇ 批量导出所选项目」，多项目打包 ZIP（每项目一个 Excel 工作簿，仅选 1 个直接下载）；打卡项目行内还可单独导出「⬇ 每日明细」</li><li>单项目视图：下方「⬇ 导出」面板提供详细数据（Excel 三分表）与每日打卡明细</li><li>学生视图：「⬇ 导出登记情况」导出该生全部项目登记情况（Excel 三分表，打卡项目按日期展开）</li><li>导出需具备该项目的操作权限；无权限时仅可查看</li>            </ul>
+                        <h4>统计图表</h4>
+            <ul>
+                <li>三种视图均提供【📊 统计图表】弹窗（ECharts）：数据集 × 条形 / 折线 / 饼图自由切换，标签多时自动倾斜并可缩放，右上角可存为图片</li><li>班级总览弹窗内「评价分布」可再选具体项目；打卡项目的「每日打卡人数」超过 30 个日期时支持框选缩放</li>            </ul>
+                    </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="togglePageHelp(false)">我知道了</button>
+        </div>
+    </div>
+</div>
+<style>
+/* ===== 全局操作反馈 toast：页面下方中央、黑色（同 omr_scan.php）；3 秒自动消失，sticky=重要提示需点击才消失 ===== */
+.toast-wrap { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:3000; display:flex; flex-direction:column-reverse; gap:8px; align-items:center; max-width:92vw; pointer-events:none; }
+.toast { pointer-events:auto; background:rgba(40,44,60,0.92); color:#fff; box-shadow:0 8px 24px rgba(0,0,0,0.28); border-radius:10px; padding:10px 16px; font-size:14px; line-height:1.6; max-width:92vw; word-break:break-all; cursor:pointer; animation:toastIn .22s ease; }
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@media (max-width: 768px) { .toast-wrap { bottom:76px; } }
+/* ===== 行内小问号按钮（点击在问号旁弹出说明浮层；与右上角大 ? 操作帮助并存） ===== */
+.hint-q { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; min-width:16px; border-radius:50%; background:#667eea; color:#fff; font-size:11px; font-weight:bold; line-height:1; border:none; cursor:pointer; vertical-align:middle; margin:0 0 2px 6px; padding:0; box-shadow:0 1px 4px rgba(102,126,234,0.4); font-family:inherit; }
+.hint-q:hover { background:#5568d3; }
+/* 小问号说明浮层：紧贴问号按钮（优先下方，放不下翻转到上方），点浮层外/再点同一个小问号收起 */
+.hint-pop { position:fixed; z-index:4000; background:#fff; color:#333; border:1px solid #e3e6f0; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.18); padding:12px 14px; font-size:13px; line-height:1.8; text-align:left; max-width:340px; max-height:70vh; overflow-y:auto; word-break:break-all; animation:toastIn .18s ease; }
+.hint-pop b { color:#667eea; }
+@media (max-width: 768px) { .hint-pop { max-width:92vw; } }
+</style>
+<script>
+// ===== 全局操作反馈 toast：showToast(msg, type, sticky) 页面下方中央黑色（同 omr_scan.php）；sticky=true 重要提示需点击才消失 =====
+function showToast(msg, type, sticky) {
+    var wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.className = 'toast-wrap'; document.body.appendChild(wrap); }
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' toast-' + type : '');
+    t.innerHTML = msg;
+    t.addEventListener('click', function () { dismiss(); });
+    wrap.appendChild(t);
+    var tm = null;
+    function dismiss() { if (tm) clearTimeout(tm); if (t.parentNode) t.parentNode.removeChild(t); }
+    if (!sticky) tm = setTimeout(dismiss, 3000);
+    return t;
+}
+// ===== 行内小问号说明：toggleHint(event, 'HTML 说明文字') → 问号旁浮层（优先下方，放不下翻转到上方；点浮层外/再点同一个小问号收起） =====
+function hintPopPos(p) {
+    var b = p.__src; if (!b) return;
+    var r = b.getBoundingClientRect();
+    var pw = p.offsetWidth, ph = p.offsetHeight;
+    var left = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, window.innerWidth - pw - 8));
+    var top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;   // 下方放不下：翻转到上方
+    p.style.left = left + 'px';
+    p.style.top = Math.max(8, top) + 'px';
+}
+function hintPopClose() {
+    var p = document.getElementById('hintPop');
+    if (p && p.parentNode) p.parentNode.removeChild(p);
+}
+function toggleHint(ev, html) {
+    ev.stopPropagation();
+    var b = ev.currentTarget;
+    var old = document.getElementById('hintPop');
+    if (old && old.__src === b) { hintPopClose(); return; }   // 再点同一个小问号：收起
+    hintPopClose();
+    var p = document.createElement('div');
+    p.id = 'hintPop';
+    p.className = 'hint-pop';
+    p.innerHTML = html;
+    p.__src = b;
+    p.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.body.appendChild(p);
+    hintPopPos(p);
+    window.addEventListener('scroll', hintPopSync, true);
+    window.addEventListener('resize', hintPopSync);
+}
+// 滚动/缩放时跟随问号按钮重新定位；按钮已从 DOM 移除（如弹窗关闭）则连带收起
+function hintPopSync() {
+    var p = document.getElementById('hintPop');
+    if (!p) return;
+    if (!p.__src || !p.__src.isConnected) { hintPopClose(); return; }
+    hintPopPos(p);
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.hint-pop')) return;
+    hintPopClose();
+});
+</script>
+<script>
+function togglePageHelp(open) {
+    var m = document.getElementById('pageHelpModal');
+    if (m) m.classList.toggle('show', open);
+}
+// 所有弹窗统一注入「最大化 / 还原」+「✕ 关闭」按钮（顺序：最大化 关闭；PC 自动宽高、手机 90%，均可一键撑满）
+(function () {
+    function initModalMaxBtns() {
+        document.querySelectorAll('.modal-mask .modal').forEach(function (m) {
+            if (m.querySelector('.modal-max-btn')) return;
+            var max = document.createElement('button');
+            max.type = 'button';
+            max.className = 'modal-max-btn';
+            max.title = '最大化 / 还原';
+            max.innerHTML = '&#x2922;';
+            max.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var maxed = m.classList.toggle('modal-max');
+                max.innerHTML = maxed ? '&#x2923;' : '&#x2922;';
+            });
+            m.appendChild(max);
+            // ✕ 关闭按钮（位于最大化右侧）：关闭所属弹窗，还原最大化状态并广播 modalclosed
+            var close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'modal-close-btn';
+            close.title = '关闭';
+            close.setAttribute('aria-label', '关闭');
+            close.innerHTML = '&#x2715;';
+            close.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var mask = m.closest('.modal-mask');
+                m.classList.remove('modal-max');
+                max.innerHTML = '&#x2922;';
+                if (mask) {
+                    mask.classList.remove('show');
+                    mask.dispatchEvent(new CustomEvent('modalclosed', { bubbles: false }));
+                }
+            });
+            m.appendChild(close);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initModalMaxBtns);
+    } else { initModalMaxBtns(); }
+})();
+</script>
+</body>
+</html>

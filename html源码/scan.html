@@ -1,0 +1,2784 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>扫码登记 - 潜记二维码作业登记系统</title>
+    <link rel="stylesheet" href="css/style.css?v=20260915">
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="favicon.ico"/>
+    <script src="js/db.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/api_local.js"></script>
+    <script src="js/api_impl_a.js"></script>
+    <script src="js/sw_boot.js"></script>
+</head>
+<body>
+<nav class="navbar">
+        <div class="navbar-inner">
+        <a class="navbar-brand" href="index.html">潜记 · 作业登记</a>
+        <div class="navbar-menu">
+                        <a href="project_view.html?project_id=3421">项目情况</a>
+                        <a href="scan.html?project_id=3421" class="active">扫码登记</a>
+                        <a href="stats.html?project_id=3421">项目统计</a>
+        </div>
+        <!-- 移动端：汉堡按钮 → 左侧抽屉菜单 -->
+        <button type="button" class="nav-burger" onclick="toggleDrawer(true)" aria-label="打开菜单">☰</button>
+    </div>
+</nav>
+<!-- 移动端左侧抽屉菜单 -->
+<div class="drawer-mask" id="drawerMask" onclick="toggleDrawer(false)"></div>
+<aside class="side-drawer" id="sideDrawer" aria-label="导航菜单">
+    <div class="drawer-head">
+        <b>潜记 · 作业登记</b>
+        <button type="button" class="drawer-close" onclick="toggleDrawer(false)" aria-label="关闭菜单">✕</button>
+    </div>
+        <nav class="drawer-nav">
+                <a href="project_view.html?project_id=3421">项目情况</a>
+                <a href="scan.html?project_id=3421" class="active">扫码登记</a>
+                <a href="stats.html?project_id=3421">项目统计</a>
+            </nav>
+</aside>
+<script>
+function toggleDrawer(open) {
+    var d = document.getElementById('sideDrawer');
+    var m = document.getElementById('drawerMask');
+    if (!d || !m) return;
+    d.classList.toggle('open', open);
+    m.classList.toggle('show', open);
+}
+</script>
+<!-- 移动端底部导航栏（PC 隐藏，≤768px 显示）：随上下文变化（默认：班级列表/统计报表/个人中心；班级：班级情况/学生列表/班级统计/个人中心；项目：项目情况/扫码登记/项目统计/个人中心）。加入学校/后台管理仅 PC 显示 -->
+<nav class="bottom-nav">
+        <a class="bottom-nav-item" href="project_view.html?project_id=3421">
+        <span class="bottom-nav-icon">📙</span>
+        <span class="bottom-nav-text">项目情况</span>
+    </a>
+        <a class="bottom-nav-item active" href="scan.html?project_id=3421">
+        <span class="bottom-nav-icon">📷</span>
+        <span class="bottom-nav-text">扫码登记</span>
+    </a>
+        <a class="bottom-nav-item" href="stats.html?project_id=3421">
+        <span class="bottom-nav-icon">📊</span>
+        <span class="bottom-nav-text">项目统计</span>
+    </a>
+    </nav>
+<div class="app-content">
+<style>
+/* 功能开关按钮（点击切换，激活为绿色） */
+.sw-btn { padding: 7px 16px; border: 1px solid #d0d4e8; background: #fff; color: #666;
+    border-radius: 8px; cursor: pointer; font-size: 14px; line-height: 1.4; }
+.sw-btn.active { background: #27ae60; border-color: #27ae60; color: #fff; font-weight: bold; }
+/* 扫码可视化提示：蓝框=识别到二维码（细框），绿框=已登记过的码，红框+?=非本班学生的码，✓=登记成功的码位置（画布叠加在摄像头画面上） */
+#qr-reader { position: relative; }
+#scanOverlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 5; }
+/* 答题模式 HUD（视频窗口右上角：已答/未答计数 + ABCD 分布） */
+#quizHud { position: absolute; top: 10px; right: 10px; z-index: 6; pointer-events: none;
+    background: rgba(0,0,0,0.55); color: #fff; border-radius: 10px;
+    padding: 8px 12px; font-size: 13px; line-height: 1.7; text-align: left; }
+#quizHud .hud-ok { color: #4ade80; font-weight: bold; }
+#quizHud .hud-no { color: #f87171; font-weight: bold; }
+#quizHud .hud-opt { display: inline-block; min-width: 64px; font-weight: bold; }
+</style>
+<!-- 顶部项目面板 + 题次切换条：bootScanPage() 从 IndexedDB 加载项目后按（无项目 / 答题·举牌 / 普通）三分支渲染（原 PHP 分支逻辑前端化） -->
+<div id="topPanel"><div class="panel" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 20px;"><b>📷 当前项目：…</b></div></div>
+<div id="roundPanel"></div>
+
+<div id="scanArea" style="display:none;">
+    <div class="panel">
+        <div id="qr-reader"></div>
+        <div class="toolbar" style="justify-content:center;">
+            <button type="button" class="btn btn-sm" id="startBtn" onclick="startScan()">开始扫码</button>
+            <button type="button" class="btn btn-sm btn-outline" id="stopBtn" onclick="stopScan()" style="display:none;">停止扫码</button>
+            <select id="camSelect" class="form-control" style="display:none;width:auto;max-width:180px;min-width:110px;padding:3px 6px;font-size:12px;" onchange="switchCam(this.value)" title="选择摄像头（选中立即切换）"></select>
+            <button type="button" class="btn btn-sm btn-outline" id="camCycleBtn" onclick="cycleCam()" style="display:none;" title="在多个摄像头之间轮流切换">🔄 切换摄像头</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="document.getElementById('qrFile').click()">上传照片识别（支持多码）</button>
+            <input type="file" id="qrFile" accept="image/*" multiple style="display:none;" onchange="fileRegister(this)" autocomplete="off">
+            <button type="button" class="hint-q" onclick="toggleHint(event, '<b>识别方式说明</b><br>· <b>开始扫码</b>=开启摄像头实时识别，学生二维码从镜头前扫过即可登记<br>· <b>上传照片识别</b>=拍照后上传，一次可识别照片中的多个二维码<br>· 多摄像头时用下拉框或「🔄 切换摄像头」轮换<br>· 摄像头不可用时会自动显示手动输入框')">?</button>
+        </div>
+    </div>
+
+    <!-- 手动输入编号/序号登记：默认隐藏，摄像头启动失败时自动出现（兜底登记方式） -->
+    <div class="panel" id="manualPanel" style="display:none;">
+        <h3>手动输入编号登记<button type="button" class="hint-q" onclick="toggleHint(event, '<b>手动输入说明</b><br>· 兜底登记方式：摄像头不可用时自动显示<br>· 输入学生编号后回车或点「登记」即可登记')">?</button></h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <input type="text" id="manualNo" class="form-control" style="flex:1;min-width:200px;max-width:320px;"
+                   placeholder="输入编号（或 djxh 码内容）后回车" onkeydown="if(event.key==='Enter')manualRegister()" autocomplete="off">
+            <button type="button" class="btn" onclick="manualRegister()">登记</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3>登记记录（<span id="scanCount">0</span>）</h3>
+        <div class="scan-log" id="scanLog">
+            <p style="color:#999;font-size:13px;">暂无登记记录</p>
+        </div>
+        <div class="toolbar" style="margin-top:15px;">
+            <div class="spacer"></div>
+            <a href="project_view.html?project_id=" id="viewLink" class="btn btn-sm btn-outline" style="text-decoration:none;">查看本项目登记情况</a>
+        </div>
+    </div>
+</div>
+
+<!-- 评价弹层（单个 / 批量内容设置共用） -->
+<div class="modal-mask" id="evalModal">
+    <div class="modal">
+        <h3><span id="eval_title">评价</span> - <span id="eval_student_name"></span></h3>
+        <div id="eval_options" class="eval-options"></div>
+        <div class="form-group" id="eval_input_group" style="display:none;">
+            <input type="text" id="eval_input" class="form-control" placeholder="请输入评价内容" autocomplete="nope" readonly onfocus="this.removeAttribute('readonly')" title="点击即可输入（浏览器不会自动填充只读输入框）">
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn btn-danger" id="eval_clear_btn" onclick="clearBatchEval()" style="display:none;" title="清除当前批量评价设置：之后扫码登记不再自动应用评价">清除设置</button>
+            <button type="button" class="btn btn-outline" onclick="closeEval()">取消</button>
+            <button type="button" class="btn" onclick="submitEval()">确定</button>
+        </div>
+    </div>
+</div>
+
+<audio id="okSound" preload="auto">
+    <source src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ==" type="audio/wav">
+</audio>
+
+<!-- 扫码指引弹层（每次进入页面显示：动画演示扫码要点；答题/举牌两套演示按模式定制） -->
+<div id="scanGuideMask" style="display:none;position:fixed;inset:0;background:rgba(20,24,40,0.62);z-index:1600;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;">
+    <div style="background:#fff;border-radius:14px;max-width:400px;width:100%;max-height:92vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,0.3);padding:18px 20px 16px;box-sizing:border-box;">
+        <h3 id="scgTitle" style="margin:0 0 4px;color:#667eea;font-size:17px;">📷 扫码登记指引</h3>
+        <p class="tip" style="margin:0 0 10px;">按下方动画操作又快又准</p>
+        <div id="scgStage" style="position:relative;height:190px;border-radius:10px;background:#eef1f7;overflow:hidden;margin-bottom:8px;"></div>
+        <div id="scgCaption" style="text-align:center;font-size:13.5px;font-weight:bold;min-height:22px;margin-bottom:8px;color:#c2410c;"></div>
+        <div id="scgTips" style="font-size:13px;line-height:1.9;color:#444;background:#f7f8fc;border-radius:8px;padding:8px 12px;margin-bottom:12px;">
+            <b style="color:#c2410c;">① 距离适中：</b>码占画面约 1/4~1/2 最易识别，太远识别慢、太近易反光失焦；远距离可切 📼 高清/超清档<br>
+            <b style="color:#1a56db;">② 多码同屏：</b>满屏多码可逐个识别各自登记，别急着移开，调整角度可提升识别速度<br>
+            <b style="color:#276749;">③ 等标注出现：</b>画面出现「座号+姓名」标注即登记完成（蓝字=提交中，白字=已确认），已登记重复扫码可按评价设置实时更新
+        </div>
+        <button type="button" class="btn" style="width:100%;padding:10px 0;font-size:15px;" onclick="closeScanGuide()">我知道了，开始扫码</button>
+    </div>
+</div>
+<script>
+/* 扫码指引动画（按模式定制）：答题=「多码同屏6码→推近4码→标注蓝白确认」；举牌=「12码上小下大→全体绿框→标注齐现蓝→变白」，均四阶段循环 */
+var SG_MODE = 'quiz';   // 由 bootScanPage() 按项目模式改写（raise=举牌）
+var scgTimer = null, scgPhase = 0;
+var SCG_NAMES = ['1 张一 A', '5 王二 B', '9 李三 C', '13 赵四 D', '17 钱五 A', '21 孙六 B', '25 周七 C', '29 吴八 D', '31 张三 A', '35 郑九 B', '39 冯十 C', '43 陈十一 D'];   // 举牌演示标注：选项各异不重复
+var SCG_BLUE = '#2563eb', SCG_BLUE_BD = '#3b82f6', SCG_GRAY = '#374151', SCG_GRAY_BD = '#9ca3af';
+function scgDrawQrTo(cv, seed) {
+    var m = 21, px = 4; cv.width = m * px; cv.height = m * px;
+    var ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#111';
+    var s = seed;
+    function rnd() { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; }
+    for (var y = 0; y < m; y++) for (var x = 0; x < m; x++) {
+        var inF = (x < 8 && y < 8) || (x >= m - 8 && y < 8) || (x < 8 && y >= m - 8);
+        if (!inF && rnd() < 0.45) ctx.fillRect(x * px, y * px, px, px);
+    }
+    [[0, 0], [m - 7, 0], [0, m - 7]].forEach(function (p) {
+        ctx.fillRect(p[0] * px, p[1] * px, 7 * px, 7 * px);
+        ctx.fillStyle = '#fff'; ctx.fillRect(p[0] * px + px, p[1] * px + px, 5 * px, 5 * px);
+        ctx.fillStyle = '#111'; ctx.fillRect(p[0] * px + 2 * px, p[1] * px + 2 * px, 3 * px, 3 * px);
+    });
+}
+function scgQrHtml(id, xc, y, sz, seed) {
+    return '<div id="' + id + '" style="position:absolute;left:calc(' + xc + '% - ' + (sz / 2) + 'px);top:' + y + 'px;width:' + sz + 'px;height:' + sz + 'px;background:#fff;border:1px solid #d8dce8;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.12);padding:2px;box-sizing:border-box;z-index:2;transition:opacity 0.9s ease;">' +
+        '<canvas data-seed="' + seed + '" style="width:100%;height:100%;display:block;"></canvas></div>';
+}
+function scgTagHtml(id, xc, y, w, fs) {
+    return '<div id="' + id + '" style="position:absolute;left:calc(' + xc + '% - ' + (w / 2) + 'px);top:' + y + 'px;width:' + w + 'px;text-align:center;background:#fff;border:1.5px solid ' + SCG_BLUE_BD + ';border-radius:6px;padding:1px 2px;font-size:' + fs + 'px;font-weight:bold;color:' + SCG_BLUE + ';z-index:3;opacity:0;transition:opacity 0.5s ease;white-space:nowrap;overflow:hidden;box-sizing:border-box;"></div>';
+}
+function scgShowTag(id, txt, col, bd) { var t = document.getElementById(id); if (!t) return; t.textContent = txt; t.style.color = col; t.style.borderColor = bd; t.style.opacity = '1'; }
+function scgHideTag(id) { var t = document.getElementById(id); if (t) t.style.opacity = '0'; }
+function scgGrpOp(pfx, n, op) { for (var i = 0; i < n; i++) { var q = document.getElementById(pfx + i); if (q) q.style.opacity = op; } }
+function scgBuild() {
+    var stage = document.getElementById('scgStage'); if (!stage) return;
+    var h = '', i, r, c, n = 0;
+    if (SG_MODE === 'raise') {
+        // 举牌：12 码 3 行×4 列，上排小/中排中/下排大（模拟前低后高、高低错落的透视感），全体绿框 + 标注齐现
+        var cols = [14, 38, 62, 86], rrow = [{ y: 12, sz: 28 }, { y: 64, sz: 36 }, { y: 122, sz: 44 }];
+        for (r = 0; r < 3; r++) for (c = 0; c < 4; c++) {
+            h += scgQrHtml('scgR' + n, cols[c], rrow[r].y, rrow[r].sz, n * 7 + 3);
+            h += scgTagHtml('scgT' + n, cols[c], rrow[r].y + rrow[r].sz + 2, 90, 10);
+            n++;
+        }
+    } else {
+        // 答题：远景 6 码 2×3 同屏 → 推近为 4 码 2×2（放大并移动）
+        var fc = [25, 50, 75], fr = [22, 104];
+        for (r = 0; r < 2; r++) for (c = 0; c < 3; c++) h += scgQrHtml('scgF' + (r * 3 + c), fc[c], fr[r], 44, (r * 3 + c) * 7 + 3);
+        h += scgTagHtml('scgFT0', 25, 70, 120, 11);
+        var nc = [30, 70], nr = [16, 98];
+        for (r = 0; r < 2; r++) for (c = 0; c < 2; c++) h += scgQrHtml('scgN' + (r * 2 + c), nc[c], nr[r], 64, (r * 2 + c) * 7 + 11);
+        h += scgTagHtml('scgNT0', 30, 84, 130, 11);
+        h += scgTagHtml('scgNT1', 70, 84, 130, 11);
+        h += scgTagHtml('scgNT2', 70, 166, 130, 11);
+    }
+    stage.innerHTML = h;
+    var cvs = stage.querySelectorAll('canvas');
+    for (i = 0; i < cvs.length; i++) scgDrawQrTo(cvs[i], parseInt(cvs[i].getAttribute('data-seed'), 10) || 3);
+}
+function scgFrames(on) {   // 举牌：全体码一次性绿框（outline 不占布局，外扩 2px 不遮码）
+    for (var i = 0; i < 12; i++) {
+        var q = document.getElementById('scgR' + i); if (!q) continue;
+        q.style.outline = on ? '2.5px solid #38a169' : 'none';
+        q.style.outlineOffset = on ? '2px' : '0';
+        q.style.boxShadow = on ? '0 0 0 3px rgba(56,161,105,0.25)' : '0 2px 8px rgba(0,0,0,0.12)';
+    }
+}
+function scgSet(p) {
+    var c = document.getElementById('scgCaption'); if (!c) return;
+    var cap = function (txt, col) { c.textContent = txt; c.style.color = col; };
+    if (SG_MODE === 'raise') {
+        if (p === 0) {
+            scgFrames(false);
+            for (var i = 0; i < 12; i++) scgHideTag('scgT' + i);
+            cap('① 全员举牌：高低错落（前低后高，见缝插针），确保码面向设备', '#c2410c');
+        } else if (p === 1) {
+            scgFrames(true);   // 一次性全体绿框=同时识别
+            cap('② 距离适中：3米左右最易识别——太远识别慢、太近易反光失焦，远距可切 📼 高清/超清', '#1a56db');
+        } else if (p === 2) {
+            for (var j = 0; j < 12; j++) scgShowTag('scgT' + j, SCG_NAMES[j], SCG_BLUE, SCG_BLUE_BD);   // 标注齐现，选项各异
+            cap('③ 多码同屏：一次性全部识别、各自登记——看屏幕提示，调整角度可提升识别效果', '#b7791f');
+        } else {
+            scgFrames(false);
+            for (var k = 0; k < 12; k++) scgShowTag('scgT' + k, SCG_NAMES[k], SCG_GRAY, SCG_GRAY_BD);   // 蓝变白=已确认
+            cap('④ 标注出现：座号+姓名+选项（蓝字=提交中，白字=已确认），重复扫码按码实时更新', '#38a169');
+        }
+    } else {
+        if (p === 0) {
+            scgGrpOp('scgF', 6, '1'); scgGrpOp('scgN', 4, '0');
+            scgHideTag('scgNT0'); scgHideTag('scgNT1'); scgHideTag('scgNT2');
+            scgShowTag('scgFT0', '12 李四 · 提交中', SCG_BLUE, SCG_BLUE_BD);
+            cap('满屏多码可逐个识别各自登记——别急着移开，调整角度可提升识别速度', '#b7791f');
+        } else if (p === 1) {
+            scgGrpOp('scgF', 6, '0'); scgGrpOp('scgN', 4, '1');
+            scgHideTag('scgFT0');
+            cap('✓ 距离适中——码占画面 1/4~1/2，识别又快又准', '#38a169');
+        } else if (p === 2) {
+            scgShowTag('scgNT0', '31 张三 · 提交中', SCG_BLUE, SCG_BLUE_BD);
+            scgShowTag('scgNT1', '05 王五 · 已确认', SCG_GRAY, SCG_GRAY_BD);
+            cap('⏳ 出现「座号+姓名」标注即登记完成（蓝=提交中，白=已确认）', '#b7791f');
+        } else {
+            scgShowTag('scgNT0', '31 张三 · 已确认', SCG_GRAY, SCG_GRAY_BD);
+            cap('✅ 已登记，换下一批学生', '#38a169');
+        }
+    }
+}
+function scShow() {
+    var msk = document.getElementById('scanGuideMask'); if (!msk) return;
+    msk.style.display = 'flex';
+    scgBuild(); scgPhase = 0; scgSet(0);
+    if (scgTimer) clearInterval(scgTimer);
+    scgTimer = setInterval(function () { scgPhase = (scgPhase + 1) % 4; scgSet(scgPhase); }, 2800);
+}
+function closeScanGuide() {
+    var msk = document.getElementById('scanGuideMask');
+    if (msk) msk.style.display = 'none';
+    if (scgTimer) { clearInterval(scgTimer); scgTimer = null; }
+}
+// 仅在扫码区可见（项目有效、自动开启扫码）时弹出；扫码区显隐由主脚本 bootScanPage() 异步决定（IndexedDB 加载项目后），
+// 项目就绪时由其直接调 scMaybeShow()；此处挂 DOMContentLoaded 兜底（时序在后仍生效，重复调用 scShow 无副作用）
+function scMaybeShow() {
+    var a = document.getElementById('scanArea');
+    if (a && a.style.display !== 'none') scShow();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scMaybeShow);
+</script>
+
+<script src="assets/html5-qrcode.min.js"></script>
+<script src="assets/zxing-multi.min.js"></script>
+<script>
+var projectId = 0;   // 由 bootScanPage() 从 ?project_id= 与 IndexedDB projects 解析赋值
+var HIST_DATE = "";   // 非空=历史日期补登（仅记该日打卡）；bootScanPage() 按日期参数校验后赋值
+var IS_QUIZ = false; // 答题模式：按答题码朝向识别选项（A/B/C/D），允许重复识别改答案
+var IS_RAISE = false; // 举牌模式：识别 6x6 黑白图案卡（编号+案边朝向），规则同答题
+var IS_ABCD = IS_QUIZ || IS_RAISE;  // 四选一（A/B/C/D）模式统称：可重复识别更新最新答案
+var CUR_ROUND = 0;   // 当前题次（0=非题次项目）：登记/统计请求携带，避免落到最后一题次
+var SPEEDY_CORRECT = [];   // ⚡ 极速：当前题次预设正确答案（空数组=未设置→标注白字加大一号）
+var EVAL_OPTIONS = null;   // 当前项目评价模式选项（eval_mode_info().options）；bootScanPage() 按项目加载
+var html5QrCode = null;
+var scanning = false;
+var scanCount = 0;
+var leaving = false;      // 非连续模式：登记成功后即将跳转项目登记情况页
+var evalRedirect = false; // 非连续模式：评价弹窗结束后跳转
+var evalPause = false;    // 登记请求进行中/弹窗评价中：暂缓「提交登记」（扫描不停止，新码进待提交队列，解除后自动提交）
+var pendingRegs = [], pendingRegKeys = {};   // evalPause 期间识别到的新码队列（上限 60，弱网下不丢码）
+
+// 非连续扫码：登记成功一次后跳转项目登记情况页；连续扫码：停留本界面
+function gotoProjectView() {
+    if (leaving) return;
+    leaving = true;
+    stopScan();
+    setTimeout(function () {
+        window.location.href = 'project_view.html?project_id=' + projectId + (CUR_ROUND ? '&round=' + CUR_ROUND : '') + (HIST_DATE ? '&date=' + HIST_DATE : '');
+    }, 1000);
+}
+
+// ===== 扫码去重记录 =====
+// 普通模式：3秒去抖；连续扫码模式：会话内同一码只算第一次
+var scanHistory = {}; // code -> timestamp(首次扫码时间) | 'sticky'
+function swOn(id) { var el = document.getElementById(id); return !!(el && el.classList.contains('active')); }   // 答题模式无功能开关区块：元素不存在视为关闭
+function clearBatchEval() {
+    // 取消「批量评价」或切到「弹窗评价」（互斥）：清除已设置的评价内容并隐藏下方提示条
+    batchEvalValue = '';
+    document.getElementById('batchEvalHint').style.display = 'none';
+}
+function toggleSw(id) {
+    var el = document.getElementById(id);
+    var on = !el.classList.contains('active');
+    if (on && (id === 'swRegEval' || id === 'swBatchEval')) {
+        // 登记+评价 与 批量评价 互斥：开启一个时关闭另一个
+        document.getElementById(id === 'swRegEval' ? 'swBatchEval' : 'swRegEval').classList.remove('active');
+        if (id === 'swRegEval') clearBatchEval();   // 弹窗评价启用：批量评价内容提示随之清除
+    }
+    el.classList.toggle('active', on);
+    if (id === 'swSpeedy') {
+        // ⚡ 极速开关持久化：默认开启，localStorage 记忆上次选择
+        try { localStorage.setItem('qj_sw_speedy', on ? '1' : '0'); } catch (e) {}
+        return;
+    }
+    if (id === 'swContinuous') {
+        // 关闭连续扫码时清空粘性记录，允许重新扫码
+        if (!on) {
+            for (var k in scanHistory) if (scanHistory[k] === 'sticky') delete scanHistory[k];
+        }
+        return;
+    }
+    // 关闭「弹窗评价」时退出多码点选模式（画面恢复、继续识别）
+    if (id === 'swRegEval' && !on && multiSel) { exitMultiSelect(); evalPause = false; flushPendingRegs(); }
+    if (id === 'swBatchEval' && on) openBatchEvalDialog();
+    else if (id === 'swBatchEval' && !on) clearBatchEval();   // 取消批量评价：清内容+隐藏提示条
+}
+// ⚡ 极速开关状态恢复：HTML 默认 active（开），仅当用户上次显式关闭时才移除
+(function () {
+    try {
+        if (localStorage.getItem('qj_sw_speedy') === '0') {
+            var se = document.getElementById('swSpeedy');
+            if (se) se.classList.remove('active');
+        }
+    } catch (e) {}
+})();
+function shouldProcess(code) {
+    var now = Date.now();
+    var continuous = swOn('swContinuous');
+    var prev = scanHistory[code];
+    if (IS_ABCD) {
+        // 答题/举牌模式：允许重复识别（每次更新最新答案），仅 1.5 秒去抖防连击
+        if (prev && prev !== 'sticky' && now - prev < 1500) return false;
+        scanHistory[code] = now;
+        return true;
+    }
+    if (prev === 'sticky') return false;          // 连续模式：永久去重（本会话）
+    if (prev && now - prev < 3000) return false;  // 普通模式：3秒去抖
+    scanHistory[code] = continuous ? 'sticky' : now;
+    return true;
+}
+
+// ===== 页面启动：从 IndexedDB 加载项目（原 PHP 顶部取数/分支渲染逻辑前端化）→ 渲染面板 → 启动扫码 =====
+function esc(str) {
+    return String(str === null || str === undefined ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function todayStr() {
+    var d = new Date();
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+function btnRotUpHtml() {
+    return '<button type="button" class="sw-btn" id="btnRotUp" onclick="rotUpDir()" title="识别方向旋转（默认屏幕上=识别上，画面 △ 指示当前方向）：手机横拿/倒拿固定放置时点此每次旋转 90°，刷新页面恢复默认">⟳ 旋转</button>';
+}
+function btnCamTierHtml() {
+    return '<button type="button" class="sw-btn" id="btnCamTier" onclick="cycleCamTier()" title="识别清晰度档位：普通≤6m(1K)/高清≤8m(2K)/超清≤10m(4K) 循环切换。档位越高识别距离越远，但开销越大越易滞后；默认高清 2K">📼 高清 ≤8m</button>';
+}
+function renderTopPanel(p) {
+    var tp = document.getElementById('topPanel');
+    if (!p) {   // 无项目分支（原 PHP else）
+        tp.innerHTML = '<div class="panel" style="text-align:center;padding:50px 20px;">'
+            + '<div style="font-size:46px;margin-bottom:8px;">📷</div>'
+            + '<h3 style="margin-bottom:8px;">请点击对应项目的「扫码登记」按钮，即可开始扫码</h3>'
+            + '<a href="index.html" class="btn">前往班级列表</a></div>';
+        return;
+    }
+    // 项目上下文标识：每日项目显示当前登记日期（今天 / 补登日期），题次项目显示当前题次——便于区分当前登的是哪天/哪一次
+    var ctx = '';
+    if (p.mode === 'daily') ctx = HIST_DATE !== '' ? '补登 ' + HIST_DATE : '今天 ' + todayStr();
+    else if (window.__isRounded) {
+        ctx = '第 ' + CUR_ROUND + ' ' + (IS_ABCD ? '题次' : '项次');
+        if (window.__roundTitles && window.__roundTitles[CUR_ROUND]) ctx += '「' + esc(window.__roundTitles[CUR_ROUND]) + '」';
+    }
+    var h = '<div class="panel" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 20px;">';
+    h += '<b>📷 当前项目：' + esc(p.name) + (ctx ? '<span style="color:#667eea;">（' + esc(ctx) + '）</span>' : '') + '</b>';
+    if (HIST_DATE !== '') h += '<span style="color:#e67e22;font-weight:bold;">⏳ 补登记日期：<b>' + esc(HIST_DATE) + '</b>（历史日期补登，仅记该日打卡）</span>';
+    if (IS_ABCD) {   // 答题/举牌分支：⚡极速 + 旋转 + 清晰度 + 扫码指南 + 模式徽标
+        h += '<span style="margin-left:auto;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
+            + '<button type="button" class="sw-btn active" id="swSpeedy" onclick="toggleSw(\'swSpeedy\')">⚡ 极速</button>'
+            + btnRotUpHtml() + btnCamTierHtml()
+            + '<button type="button" class="hint-q" onclick="toggleHint(event, \'<b>📷 扫码指南</b><br>· <b>📼 清晰度</b>：普通≤6m（1K）/ 高清≤8m（2K，默认）/ 超清≤10m（4K），点击循环切换；档位越高识别距离越远但性能开销越大，设备反复卡顿会自动降为高清<br>· <b>⟳ 旋转</b>：手动旋转识别方向（默认=屏幕上，画面 △ 指示当前方向），刷新页面恢复默认<br>· <b>⚡ 极速</b>（默认开启）：只显示学生「序号 姓名 选项」标注，不画蓝/绿定位框，画面干净识别快；选项与预设答案一致时绿字并带 √（预设答案在 project_view 题次里设置）；未设置预设答案时白字加大一号显示；非本班学生的码不作任何提示<br>· <b>标注颜色</b>：蓝字=刚发包提交中；白字=已确认（同一选项不再重复发送）；学生改了选项会重新发送并变蓝<br>· <b>多码识别</b>：满屏多码会逐个识别各自登记，无需一个一个对<br>· <b>统计框</b>：页面打开即显示全班作答情况，无需等待摄像头<br>· <b>扫码指引</b>：每次进入页面会弹出与本模式匹配的动画演示（距离/多码/标注要点），点「我知道了」关闭\')">?</button>'
+            + '</span>'
+            + '<span style="color:#e74c3c;font-weight:bold;">' + (IS_RAISE ? '🙋 举牌' : '📝 答题') + '</span>';
+    } else {   // 普通分支：弹窗评价 / 批量评价 / 连续扫码 + 旋转 + 清晰度 + 登记指南 + 批量评价提示条
+        h += '<span style="margin-left:auto;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
+            + '<button type="button" class="sw-btn" id="swRegEval" onclick="toggleSw(\'swRegEval\')">弹窗评价</button>'
+            + '<button type="button" class="sw-btn" id="swBatchEval" onclick="toggleSw(\'swBatchEval\')">批量评价</button>'
+            + '<button type="button" class="sw-btn active" id="swContinuous" onclick="toggleSw(\'swContinuous\')">连续扫码</button>'
+            + btnRotUpHtml() + btnCamTierHtml()
+            + '<button type="button" class="hint-q" onclick="toggleHint(event, \'<b>📷 登记指南</b><br>· <b>📼 清晰度</b>：普通≤6m（1K）/ 高清≤8m（2K，默认）/ 超清≤10m（4K）循环切换；设备反复卡顿会自动降为高清<br>· <b>⟳ 旋转</b>：手动旋转识别方向（默认=屏幕上），刷新页面恢复默认<br>· <b>功能开关</b>：弹窗评价=登记成功后弹出评价窗口给该生评价，已登记学生再扫也可弹出补充/修改评价（以最新一次为准）；批量评价=先设定统一评价内容，之后扫码登记自动带上（不弹窗），已登记学生再扫会把评价直接更新为设置内容，取消开关或切到弹窗评价时清除设置；连续扫码=登记后不跳转，留在本页连续扫码，适合整班集中登记<br>· <b>学生标注</b>：座号+姓名+评价内容实时跟随码显示（码在=显示、码走=消失、码回来=自动恢复）<br>· <b>多码识别</b>：满屏多码逐个识别各自登记（上传照片也支持多码）<br>· <b>评价随题次</b>：多次/自定义项目的评价写入当前扫的题次，切题次互不串<br>· <b>已登记再扫</b>：开弹窗评价=可补充/修改评价；批量评价已设置=评价直接更新为设置内容；都没开=重复扫码忽略\')">?</button>'
+            + '</span>'
+            + '<div id="batchEvalHint" style="display:none;color:#27ae60;font-size:13px;flex-basis:100%;">批量评价内容：<b id="batchEvalText"></b> <a href="javascript:void(0)" onclick="openBatchEvalDialog()" style="color:#667eea;">重设</a></div>';
+    }
+    h += '</div>';
+    tp.innerHTML = h;
+    if (IS_ABCD) {   // ⚡ 极速持久化恢复：按钮默认 active（开），仅当用户上次显式关闭时才移除（原解析期 IIFE 因按钮动态创建改为在此恢复）
+        try { if (localStorage.getItem('qj_sw_speedy') === '0') document.getElementById('swSpeedy').classList.remove('active'); } catch (e) {}
+    }
+    renderCamTierBtn();   // 清晰度档位记忆恢复到按钮文案（按钮由本函数动态创建，原解析期调用为空操作）
+}
+function fixScanCtxLinks() {   // 导航/抽屉/底部导航的项目上下文链接修正为实际项目 id（viewLink 由启动逻辑单独带 round/date 赋值）
+    document.querySelectorAll('a[href*="project_id="]').forEach(function (a) {
+        if (a.id === 'viewLink') return;
+        a.href = a.href.replace(/project_id=\d+/, 'project_id=' + projectId);
+    });
+}
+function renderRoundsPanel(rounds, titles) {   // 题次/项次切换条（与 project_view 胶囊条同款，共用 assets/round_switch.js；单用户版恒可管理 admin=true）
+    document.getElementById('roundPanel').innerHTML = '<div class="panel" style="padding:10px 20px;"><span id="rsSwitch"></span></div>';
+    window.RS_DATA = { pid: projectId, page: 'scan.html', label: (IS_ABCD ? '题次' : '项次'),
+        rounds: rounds, current: CUR_ROUND, titles: titles, admin: true };
+    var s = document.createElement('script');
+    s.src = 'assets/round_switch.js?v=1';
+    document.body.appendChild(s);
+}
+function patchRaiseTexts() {   // 举牌模式：指引标题/要点与手动输入面板按原 PHP 分支改为「序号」文案
+    if (!IS_RAISE) return;
+    var t = document.getElementById('scgTitle');
+    if (t) t.textContent = '🙋 举牌登记指引';
+    var tip = document.getElementById('scgTips');
+    if (tip) tip.innerHTML = '<b style="color:#c2410c;">① 全员举牌：</b>提醒高低错落（前低后高，见缝插针），确保码面向设备<br>'
+        + '<b style="color:#1a56db;">② 距离适中：</b>3米左右最易识别，太远识别慢、太近易反光失焦；远距离可切 📼 高清/超清档<br>'
+        + '<b style="color:#276749;">③ 多码同屏：</b>满屏多码可一次性全部识别，各自登记，看屏幕提示，调整角度可提升识别效果<br>'
+        + '<b style="color:#7048e8;">④ 标注出现：</b>画面出现「座号+姓名+选项」标注即可（蓝字=提交中，白字=已确认），已登记重复扫码可按码实时更新';
+    var mh = document.querySelector('#manualPanel h3');
+    if (mh) mh.innerHTML = '手动输入序号登记<button type="button" class="hint-q" onclick="toggleHint(event, \'<b>手动输入说明</b><br>· 兜底登记方式：摄像头不可用时自动显示<br>· 输入学生序号后回车或点「登记」即可登记\')">?</button>';
+    var mn = document.getElementById('manualNo');
+    if (mn) mn.placeholder = '输入学生序号（举牌号码）后回车';
+}
+function bootScanPage() {
+    var params = new URLSearchParams(location.search);
+    projectId = parseInt(params.get('project_id'), 10) || 0;
+    var P = null, ROUNDS = [], TITLES = {}, ROUNDED = false;
+    var load = projectId > 0 ? DB.get('projects', projectId) : Promise.resolve(null);
+    load.then(function (p) {
+        if (!p || p.deleted_at) { projectId = 0; return null; }   // 项目不存在/已删除：按无项目分支
+        P = p;
+        HIST_DATE = '';
+        var qd = params.get('date') || '';
+        if (p.mode === 'daily' && /^\d{4}-\d{2}-\d{2}$/.test(qd) && qd < todayStr()) HIST_DATE = qd;   // 历史日期补登（仅打卡模式、早于今天）
+        IS_QUIZ = p.mode === 'quiz';
+        IS_RAISE = p.mode === 'raise';
+        IS_ABCD = IS_QUIZ || IS_RAISE;
+        SG_MODE = IS_RAISE ? 'raise' : 'quiz';   // 扫码指引动画按模式定制
+        if (typeof revNotify === 'function') revNotify(p.class_id, 'toast', { project_id: projectId });
+        else window.__revPending = { cid: p.class_id, pid: projectId };   // rev_notify.js 尚未加载：由页尾脚本兜底补挂
+        ROUNDED = QJ.project_is_rounded(p);
+        return ROUNDED ? DB.by('project_rounds', 'project_id', projectId) : Promise.resolve([]);
+    }).then(function (rows) {
+        rows = rows || [];
+        rows.sort(function (a, b) { return a.round_no - b.round_no; });
+        if (ROUNDED && !rows.length) {   // 无轮次自动补第 1 次（与 common.js project_rounds_list 兜底一致）
+            return DB.insert('project_rounds', { project_id: projectId, round_no: 1, title: null, correct_opts: null, created_at: DB.nowStr() })
+                .then(function () { return [{ round_no: 1, title: null, correct_opts: null }]; });
+        }
+        return rows;
+    }).then(function (rows) {
+        rows.forEach(function (r) {
+            ROUNDS.push(r.round_no);
+            if (r.title) TITLES[r.round_no] = r.title;
+        });
+        if (ROUNDED) {
+            var qround = parseInt(params.get('round'), 10) || 0;
+            if (ROUNDS.indexOf(qround) === -1) qround = ROUNDS[ROUNDS.length - 1];   // 缺省回退最后一次（与 project_view 一致）
+            CUR_ROUND = qround;
+            rows.forEach(function (r) {   // ⚡ 极速：当前题次预设正确答案（逗号分隔 A/B/C/D）
+                if (r.round_no === CUR_ROUND && r.correct_opts) {
+                    SPEEDY_CORRECT = String(r.correct_opts).split(',').map(function (x) { return x.trim().toUpperCase(); }).filter(function (x) { return x; });
+                }
+            });
+        }
+        window.__isRounded = ROUNDED;
+        window.__roundTitles = TITLES;
+        return P ? QJ.eval_mode_info(P.eval_mode).catch(function () { return null; }) : Promise.resolve(null);
+    }).then(function (m) {
+        EVAL_OPTIONS = (m && m.options) ? m.options : null;   // 评价选项（系统模板 / 自定义模式统一解析）
+        renderTopPanel(P);
+        if (!P) return;
+        fixScanCtxLinks();
+        if (ROUNDED) renderRoundsPanel(ROUNDS, TITLES);
+        patchRaiseTexts();
+        document.getElementById('scanArea').style.display = 'block';
+        document.getElementById('viewLink').href = 'project_view.html?project_id=' + projectId + (CUR_ROUND ? '&round=' + CUR_ROUND : '') + (HIST_DATE ? '&date=' + HIST_DATE : '');
+        if (typeof scMaybeShow === 'function') scMaybeShow();   // 扫码指引：项目就绪即弹（DOMContentLoaded 兜底之外的主动调用）
+        // 进入页面自动开始扫码：项目就绪即启动（无设备/无权限由 startScan 内的失败提示与手动输入面板兜底，比预检更准确）
+        startScan();
+        if (IS_ABCD) initQuizHud();   // 统计框尽早出现：建框+拉统计
+    }).catch(function () {
+        renderTopPanel(null);
+    });
+}
+bootScanPage();
+// 插拔摄像头自动响应：新设备接入即自动重开（用户主动停止过则不打扰；项目无效时不启动）
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', function () {
+        if (projectId <= 0) return;
+        refreshCamList().then(function (ds) {
+            if (!ds.length) camFailNotify('未检测到摄像设备，请确认后重试');
+            else if (!scanning && !camBusy && !userStopped) startScan();
+        });
+    });
+}
+
+// ===== 答题模式：二维码朝向 → 选项 / 右上角 HUD =====
+// ZXing 结果点顺序 [左下, 左上, 右上]（第4点=校正图案忽略）：由「左下→左上」向量（码自身“上”方向）
+// 在画面中的旋转角判边（实测校准）：0°=C(下) 90°=B(右) 180°=A(上) 270°=D(左)。
+// html5-qrcode 返回的定位点序使「左下→左上」向量与字母排印方向相反（整体恰差 180°，旧映射把
+// 打印 A 识别成 C、B→D、C→A、D→B），故按实测偏移校准；卡片物理约定不变：所选字母转到正上方出示
+function quizOptionFromPts(pts) {
+    if (!pts || pts.length < 3) return '';
+    // 方向对齐：入参 pts 为视频原始坐标（未旋转系）。设备横拿/倒拿（UP_DIR≠0）时，码在画面里是斜的，
+    // 先把定位点旋转到「物理上」坐标系再判边（公式与 multiTick 抓帧旋转一致），保证判出的选项恒按物理方向
+    var vEl = document.querySelector('#qr-reader video');
+    if (UP_DIR && vEl && vEl.videoWidth) {
+        var W0 = vEl.videoWidth, H0 = vEl.videoHeight;
+        pts = pts.map(function (p) {
+            if (UP_DIR === 1) return { x: p.y, y: W0 - p.x };
+            if (UP_DIR === 3) return { x: H0 - p.y, y: p.x };
+            return { x: W0 - p.x, y: H0 - p.y };   // UP_DIR === 2
+        });
+    }
+    // 自校验：结果点若非「左下/左上/右上」排布（直角顶点不在 pts[1]），先旋转点序再判
+    var seq = [pts];
+    if (pts.length >= 3) {
+        seq.push([pts[1], pts[2], pts[0]]);
+        seq.push([pts[2], pts[0], pts[1]]);
+    }
+    for (var s = 0; s < seq.length; s++) {
+        var p0 = seq[s][0], p1 = seq[s][1], p2 = seq[s][2];   // p0=左下 p1=左上 p2=右上
+        var up = { x: p1.x - p0.x, y: p1.y - p0.y };
+        var dg = { x: p2.x - p0.x, y: p2.y - p0.y };          // 对角线（左下→右上）
+        var cross = up.x * dg.y - up.y * dg.x;
+        var dot = up.x * dg.x + up.y * dg.y;
+        // 校验①：对角线与“上”方向成 45°（cosA≈1）且方向正确（cross>0）
+        var lu = Math.hypot(up.x, up.y), ld = Math.hypot(dg.x, dg.y);
+        if (lu < 4 || ld < 4) continue;
+        var cosA = (dot / (lu * ld)) * Math.SQRT2;   // 期望 ≈1
+        if (cross <= 0 || cosA < 0.7) continue;
+        // 校验②：直角顶点必须在 p1（左上定位角）：p0→p1 与 p2→p1 夹角≈90°
+        var v1 = { x: p0.x - p1.x, y: p0.y - p1.y }, v2 = { x: p2.x - p1.x, y: p2.y - p1.y };
+        var l1 = Math.hypot(v1.x, v1.y), l2 = Math.hypot(v2.x, v2.y);
+        if (l1 < 4 || l2 < 4) continue;
+        if (Math.abs((v1.x * v2.x + v1.y * v2.y) / (l1 * l2)) > 0.2) continue;
+        var rot = ((Math.atan2(up.y, up.x) * 180 / Math.PI) + 90 + 720) % 360;
+        if (rot < 45 || rot >= 315) return 'C';
+        if (rot < 135) return 'B';
+        if (rot < 225) return 'A';
+        return 'D';
+    }
+    return '';
+}
+
+// HUD：视频窗口右上角（已答=绿色 / 未答=红色 + ABCD 各选项人数），随每次登记实时刷新
+function quizHudEl() {
+    // html5-qrcode stop() 会清空 #qr-reader：画布/HUD 被移除时自动重建
+    var hud = document.getElementById('quizHud');
+    var host = document.getElementById('qr-reader');
+    if (!hud && host) {
+        hud = document.createElement('div');
+        hud.id = 'quizHud';
+        hud.innerHTML = '<div><span class="hud-ok">✓ 已答 <b id="hudAnswered">0</b></span>　' +
+            '<span class="hud-no">✗ 未答 <b id="hudUnanswered">0</b></span></div>' +
+            '<div id="hudOpts"></div>';
+        host.appendChild(hud);
+    }
+    return hud;
+}
+function updateQuizHud(q) {
+    if (!IS_ABCD || !q) return;
+    quizHudEl();
+    var a = document.getElementById('hudAnswered');
+    var u = document.getElementById('hudUnanswered');
+    var o = document.getElementById('hudOpts');
+    if (a) a.textContent = q.answered || 0;
+    if (u) u.textContent = q.unanswered || 0;
+    if (o) {
+        var colors = { A: '#60a5fa', B: '#4ade80', C: '#fbbf24', D: '#f87171' };
+        o.innerHTML = ['A', 'B', 'C', 'D'].map(function (k) {
+            return '<span class="hud-opt" style="color:' + colors[k] + ';">' + k + '：' + (q.counts && q.counts[k] || 0) + ' 人</span>';
+        }).join('');
+    }
+}
+function initQuizHud() {
+    updateQuizHud({ answered: 0, unanswered: 0, counts: {} });
+    fetch('api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'type=quiz_stats&project_id=' + projectId + (CUR_ROUND ? '&round=' + CUR_ROUND : '')
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d && d.success) updateQuizHud(d); })
+    .catch(function () {});
+}
+
+var batchEvalValue = '';
+function openBatchEvalDialog() {
+    openEvalDialog('batch', '批量评价', '之后扫码登记的学生将全部设为相同评价');
+}
+// 批量评价：清除当前设置（之后扫码登记不再自动应用评价；需重新设置才会继续）
+function clearBatchEval() {
+    batchEvalValue = '';
+    document.getElementById('batchEvalHint').style.display = 'none';
+    closeEval();
+}
+
+// ===== 评价弹层 =====
+var evalTarget = 'single';
+var evalStudentId = 0;
+var evalStudentName = '';   // 弹窗评价对象（全格式姓名，评价成功后写日志用）
+function openEvalDialog(target, title, subtitle, studentId) {
+    evalTarget = target;
+    evalStudentId = studentId || 0;
+    evalStudentName = subtitle || '';
+    document.getElementById('eval_title').textContent = title;
+    document.getElementById('eval_student_name').textContent = subtitle || '';
+    document.getElementById('eval_clear_btn').style.display = (target === 'batch') ? '' : 'none';
+    var optionsBox = document.getElementById('eval_options');
+    var inputGroup = document.getElementById('eval_input_group');
+    optionsBox.innerHTML = '';
+    if (EVAL_OPTIONS) {
+        inputGroup.style.display = 'none';
+        Object.keys(EVAL_OPTIONS).forEach(function (key) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = EVAL_OPTIONS[key];
+            btn.onclick = function () {
+                optionsBox.querySelectorAll('button').forEach(function (b) { b.classList.remove('sel'); });
+                btn.classList.add('sel');
+                btn.dataset.selected = key;
+            };
+            optionsBox.appendChild(btn);
+        });
+    } else {
+        inputGroup.style.display = 'block';
+        document.getElementById('eval_input').value = '';
+    }
+    document.getElementById('evalModal').classList.add('show');
+}
+function closeEval() {
+    document.getElementById('evalModal').classList.remove('show');
+    // 批量评价弹窗未设置评价内容就关闭（取消 / 清除）：开关自动关闭，避免留在空设置状态
+    if (evalTarget === 'batch' && batchEvalValue === '') {
+        document.getElementById('swBatchEval').classList.remove('active');
+    }
+    // 评价结束（成功或取消）：恢复扫码识别（多码点选模式一并退出）
+    if (evalPause) { evalPause = false; exitMultiSelect(); flushPendingRegs(); }
+    if (evalRedirect) {
+        evalRedirect = false;
+        if (!swOn('swContinuous')) gotoProjectView();
+    }
+}
+function getSelectedEval() {
+    if (EVAL_OPTIONS) {
+        var sel = document.querySelector('#eval_options button.sel');
+        return sel ? sel.dataset.selected : '';
+    }
+    return document.getElementById('eval_input').value.trim();
+}
+function submitEval() {
+    var value = getSelectedEval();
+    if (value === '') { showToast('请先选择或输入评价内容', 'error'); return; }
+    if (evalTarget === 'batch') {
+        batchEvalValue = value;
+        document.getElementById('batchEvalHint').style.display = '';
+        document.getElementById('batchEvalText').textContent = value;
+        closeEval();
+        return;
+    }
+    // 单个学生评价（登记+评价流程）
+    fetch('api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'type=batch_evaluate&project_id=' + projectId + '&student_ids=' + evalStudentId + '&value=' + encodeURIComponent(value)
+            + (CUR_ROUND ? '&round=' + CUR_ROUND : '')   // 题次项目评价随轮
+            + (HIST_DATE ? '&date=' + HIST_DATE : '')   // 历史补登场景：评价写到指定日期而非今天
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+        if (!data.success) { showToast(data.message || '评价失败', 'error'); return; }
+        // 学生标注的评价内容实时更新（码在画面时立即可见）
+        var optText = EVAL_OPTIONS && EVAL_OPTIONS[value] ? EVAL_OPTIONS[value] : value;
+        Object.keys(nameMarks).forEach(function (c) {
+            if (nameMarks[c].sid === evalStudentId) nameMarks[c].opt = optText;
+        });
+        appendLog(true, '✓ ' + (evalStudentName || '学生') + ' 评价成功：' + optText);   // 评价结果写入登记记录
+        closeEval();
+    })
+    .catch(function () { showToast('网络错误', 'error'); });
+}
+
+// ===== 扫码可视化提示（蓝框=识别到二维码；✓=登记成功；绿框=已登记过的码；红框+?=非本班学生码；画布叠加在摄像头画面上） =====
+var overlayCanvas = null, overlayCtx = null, overlayRaf = 0;
+var hitFrames = [];    // 蓝色细框 [{pts, until}]（识别到二维码，摄像头原始分辨率坐标）
+var repeatFrames = []; // 绿色框（已登记过的码）
+var failFrames = [];   // 红色框+红?（非本班学生的码）
+var okMarks = [];      // 绿色✓（登记成功的码）
+var repeatUntil = {};  // code -> 时间戳：期间该码再次入镜持续刷新绿框
+var ptsCache = {};     // code -> {pts, ts} 最近一次解码到的位置
+var pendingFlash = {}; // code -> 过期时间：登记成功但位置未知，等解码到该码时补显✓
+var multiSel = null;   // 多码点选模式：[{code, pts, cx, cy, r}]（画面静止，点选后登记并弹窗评价）
+var frozenFrame = null; // 点选模式冻结的画面快照（当前视频帧画布）
+var nameMarks = {}; // 答题/举牌模式：实时跟随的学生标注（码内容 → {sid, seat, name, opt, pts}），每个已登记的码各一条；码在画面就跟随显示，移出画面/不再被识别立即消失
+
+function getOverlay() {
+    // html5-qrcode stop() 会清空 #qr-reader，画布被移除时自动重建
+    if (!overlayCanvas || !overlayCanvas.isConnected) {
+        overlayCanvas = document.getElementById('scanOverlay');
+        if (!overlayCanvas) {
+            var host = document.getElementById('qr-reader');
+            if (!host) return null;
+            overlayCanvas = document.createElement('canvas');
+            overlayCanvas.id = 'scanOverlay';
+            host.appendChild(overlayCanvas);
+            overlayCtx = null;
+        }
+        overlayCtx = overlayCanvas.getContext('2d');
+    }
+    return overlayCanvas;
+}
+
+function startOverlay() {
+    getOverlay();
+    if (!overlayRaf) overlayRaf = requestAnimationFrame(drawOverlayLoop);
+}
+
+function stopOverlay() {
+    if (overlayRaf) { cancelAnimationFrame(overlayRaf); overlayRaf = 0; }
+    hitFrames = []; repeatFrames = []; failFrames = []; okMarks = [];
+    ptsCache = {}; pendingFlash = {}; repeatUntil = {};
+    multiSel = null; frozenFrame = null;
+    nameMarks = {};
+    if (overlayCanvas && overlayCtx) {
+        overlayCtx.setTransform(1, 0, 0, 1, 0, 0);   // 绘制循环使用缩放变换，清理前恢复单位变换
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    }
+}
+
+// 「上」方向指引 △：画面里 △ 恒指当前识别坐标系的「上」（【⟳ 旋转】按钮手动切换，默认=屏幕上）——
+// 学生把答题卡/举牌卡的「上」对准 △ 出示即为正确方向（画在对应屏幕边缘中央，橙色醒目，极速模式也显示）
+function drawUpArrow(ctx, vw, vh) {
+    var s = Math.max(40, vw * 0.035), m = s * 0.9;   // 尖端距边 m，三角高 2s
+    var cx, cy, dx, dy;   // 底边中心与尖端指向（物理上在屏幕中的方向）
+    if (UP_DIR === 1)      { cx = vw - m; cy = vh / 2; dx = 1; dy = 0; }
+    else if (UP_DIR === 2) { cx = vw / 2; cy = vh - m; dx = 0; dy = 1; }
+    else if (UP_DIR === 3) { cx = m; cy = vh / 2; dx = -1; dy = 0; }
+    else                   { cx = vw / 2; cy = m; dx = 0; dy = -1; }
+    var nx = -dy, ny = dx;                                             // 底边方向
+    var ax = cx + dx * s, ay = cy + dy * s;                            // 尖端
+    var bx = cx - dx * s * 0.35, by = cy - dy * s * 0.35;              // 底边中心
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx + nx * s * 0.7, by + ny * s * 0.7);
+    ctx.lineTo(bx - nx * s * 0.7, by - ny * s * 0.7);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(249,115,22,0.9)';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, s * 0.08);
+    ctx.fill();
+    ctx.stroke();
+}
+
+function drawOverlayLoop() {
+    overlayRaf = requestAnimationFrame(drawOverlayLoop);
+    var canvas = getOverlay();
+    var video = document.querySelector('#qr-reader video');
+    if (!canvas || !video || !video.videoWidth) return;
+    // 物理画布限制到 ≤1280 宽并整体缩放绘制：4K 摄像头时标注层每帧绘制像素量降 ~90%，低端手机不再卡顿；
+    // 绘制坐标仍统一使用视频原始分辨率（setTransform 缩放 + canvas._vw 记录视频宽），识别抓帧（frameCanvas）分辨率完全不受影响
+    var ovScale = Math.min(1, 1280 / video.videoWidth);
+    var ow = Math.max(1, Math.round(video.videoWidth * ovScale));
+    var oh = Math.max(1, Math.round(video.videoHeight * ovScale));
+    if (canvas.width !== ow || canvas.height !== oh) {
+        canvas.width = ow;
+        canvas.height = oh;
+    }
+    canvas._vw = video.videoWidth;
+    canvas._vh = video.videoHeight;
+    var now = Date.now(), ctx = overlayCtx;
+    ctx.setTransform(ovScale, 0, 0, ovScale, 0, 0);
+    ctx.clearRect(0, 0, video.videoWidth, video.videoHeight);
+    if (multiSel) { drawMultiSelect(ctx, canvas); return; }   // 点选模式：画面静止 + 绿色→圆圈
+    var speedy = IS_ABCD && swOn('swSpeedy');   // 极速为答题/举牌专属：非 ABCD 强制关（swSpeedy 元素不存在，localStorage 残留不能生效，且 SPEEDY_CORRECT 未注入）
+    if (speedy) {
+        // ⚡ 极速：不画蓝/绿/红定位框与绿勾，只保留「序号 姓名 选项」标注（清空数组防止重新开关时残留旧帧）
+        hitFrames = []; repeatFrames = []; failFrames = []; okMarks = [];
+    } else {
+        hitFrames = hitFrames.filter(function (r) { return r.until > now; });
+        for (var i = 0; i < hitFrames.length; i++) strokeQuad(ctx, hitFrames[i].pts, canvas, '#2f7bff', 'rgba(47,123,255,0.07)');
+        repeatFrames = repeatFrames.filter(function (r) { return r.until > now; });
+        for (var j = 0; j < repeatFrames.length; j++) strokeQuad(ctx, repeatFrames[j].pts, canvas, '#22c55e', 'rgba(34,197,94,0.10)');
+        failFrames = failFrames.filter(function (r) { return r.until > now; });
+        for (var k = 0; k < failFrames.length; k++) drawFailFrame(ctx, failFrames[k], canvas);
+        okMarks = okMarks.filter(function (g) { return g.until > now; });
+        for (var m = 0; m < okMarks.length; m++) drawOkMark(ctx, okMarks[m], now);
+    }
+    if (true) {   // 学生信息标注：所有模式（答题/举牌=序号姓名选项；打卡/单次/多次/自定义=座号姓名评价内容，未开评价自然只显示座号姓名）
+        // 每个已登记的码各自实时显示标注（多码同屏互不干扰、不跳动）：
+        // 码仍在画面（新鲜度窗口内有定位刷新，容忍识别偶尔漏检一两帧不闪烁）→ 每帧跟随其当前位置显示；
+        // 超窗/移出画面 → 本帧不显示（**数据保留**，码重新识别到自动恢复——去重后不再每秒发包，登记响应
+        // 不会重建标注，删数据会让标注一旦消失就永久空白，用户已踩坑）；数据仅在停扫/换码时清理；
+        // 窗口自适应识别节奏：固定 1.1s 在满屏图案单帧 1~3 秒时会「刚画就被删」，表现为识别到了却不显示
+        // 名字——改为 max(1.1s, 识别间隔+0.8s)（上限 5s）；新码占据旧位置（两码中心距过近）时较旧的标注
+        // 本帧让位不画（防叠错），两码分开后自动恢复
+        var mkWin = Math.min(5000, Math.max(1100, mtGap + 800));
+        var mkCs = {};
+        Object.keys(nameMarks).forEach(function (c) {
+            var mk = nameMarks[c], mc = ptsCache[c];
+            if (mc && now - mc.ts < mkWin && mc.pts && mc.pts.length) {
+                mk.pts = mc.pts;
+                var mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity;
+                mc.pts.forEach(function (p) {
+                    if (p.x < mnx) mnx = p.x;
+                    if (p.x > mxx) mxx = p.x;
+                    if (p.y < mny) mny = p.y;
+                    if (p.y > mxy) mxy = p.y;
+                });
+                mkCs[c] = { x: (mnx + mxx) / 2, y: (mny + mxy) / 2, r: Math.hypot(mxx - mnx, mxy - mny) / 2, ts: mc.ts };
+            }
+        });
+        Object.keys(mkCs).forEach(function (a) {
+            Object.keys(mkCs).forEach(function (b) {
+                if (a === b || !mkCs[a] || !mkCs[b] || mkCs[a].ts >= mkCs[b].ts) return;   // 只让较旧的标注让位
+                var dx = mkCs[a].x - mkCs[b].x, dy = mkCs[a].y - mkCs[b].y, th = Math.min(mkCs[a].r, mkCs[b].r) * 0.6;
+                if (dx * dx + dy * dy < th * th) delete mkCs[a];   // 本帧不画（数据保留，分开后恢复）
+            });
+        });
+        Object.keys(mkCs).forEach(function (c) {
+            drawNameMark(ctx, canvas, nameMarks[c], speedy, markSend[c] === 1);   // 只画当前识别新鲜的码：码移出画面（超窗）即不画，数据保留等回来自动恢复
+        });
+    }
+    drawUpArrow(ctx, video.videoWidth, video.videoHeight);   // 「上」方向指引 △：恒指当前识别坐标系的上（各模式均显示）
+}
+
+// 答题/举牌模式：识别登记成功后，在该码上方实时显示「序号 姓名 选项」标注（每码一条；同一学生改用新码时旧码标注移除）
+// 标注实时跟随：码在画面就显示，移出画面/不再被识别时由绘制循环立即删除；无码位置（手动输入登记）不显示
+function setNameMark(code, student, pts, opt) {
+    Object.keys(nameMarks).forEach(function (k) {
+        if (nameMarks[k].sid === student.id && k !== code) delete nameMarks[k];   // 同一学生的旧码标注移除
+    });
+    var m = nameMarks[code];
+    var optText = opt && EVAL_OPTIONS && EVAL_OPTIONS[opt] ? EVAL_OPTIONS[opt] : (opt || '');   // 评价选项存的是 key：标注显示转换为目标文本（A-D/手输评价原样）
+    if (!m) {
+        nameMarks[code] = { sid: student.id, seat: student.seat_no, name: student.name, opt: optText, pts: (pts && pts.length) ? pts : null };
+    } else {
+        if (opt) m.opt = optText;                        // 重复识别/补评价：更新选项或评价内容
+        if (pts && pts.length) m.pts = pts;              // 重复识别：刷新标注位置
+    }
+    if (pts && pts.length) ptsCache[code] = { pts: pts, ts: Date.now() };   // 登记响应即视为最新位置：标注立即可显示，不必等下一次识别刷新
+}
+
+// 持续学生标注：深色底白字「序号 姓名 选项」，画在码面上方（贴顶则画在码面内），随码移动而跟随
+// ⚡ 极速增强（speedy=true）：选项与预设答案一致→绿字并加「√」；未设置预设答案→白字加大一号；其余保持原样
+// 发包着色（sending=true，用户定案）：本次识别触发了发包（新码或选项变化，响应确认前持续蓝）→ 蓝字；
+// 二次识别选项未变不发包 → 常规色（未设预设=白字；设了预设则保留答对绿√）
+// 标签位图缓存：深色底+文字只渲染一次（文字/字号/颜色变化才重建），每帧仅 drawImage 贴图——
+// 满屏 50 个标注时省去每帧 50 次 measureText+fillText 文字排版开销（黑色半透明底本身开销极小，保留以保证可读性）
+var mkLabelCache = {};
+function markLabelBitmap(label, fs, color) {
+    var key = label + '|' + fs + '|' + color;
+    if (mkLabelCache[key]) return mkLabelCache[key];
+    var cv = document.createElement('canvas');
+    var c2 = cv.getContext('2d');
+    var font = 'bold ' + fs + 'px "Microsoft YaHei", Arial, sans-serif';
+    c2.font = font;
+    var padX = fs * 0.45, padY = fs * 0.3;
+    var bw = Math.ceil(c2.measureText(label).width + padX * 2), bh = Math.ceil(fs + padY * 2);
+    cv.width = bw;
+    cv.height = bh;
+    c2.font = font;   // 重设画布尺寸会重置状态，需重新设置
+    c2.fillStyle = 'rgba(17,24,39,0.72)';
+    c2.fillRect(0, 0, bw, bh);
+    c2.fillStyle = color;
+    c2.textBaseline = 'middle';
+    c2.fillText(label, padX, bh / 2);
+    if (Object.keys(mkLabelCache).length > 120) mkLabelCache = {};   // 防膨胀：距离移动字号跨档累积时整体重建
+    mkLabelCache[key] = { cv: cv, w: bw, h: bh };
+    return mkLabelCache[key];
+}
+
+function drawNameMark(ctx, canvas, mark, speedy, sending) {
+    var pts = mark.pts;
+    var ring = quadFromPts(pts) || pts;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    ring.forEach(function (p) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    });
+    var label = (mark.seat !== '' && mark.seat !== null && mark.seat !== undefined ? mark.seat + '号 ' : '') + mark.name + (mark.opt ? ' ' + mark.opt : '');
+    var fs = Math.max(14, Math.min(46, (maxX - minX) * 0.16));
+    var textColor = '#ffffff';
+    if (speedy) {
+        if (mark.opt && SPEEDY_CORRECT.indexOf(String(mark.opt).toUpperCase()) !== -1) {
+            label += ' √';
+            textColor = '#22c55e';
+        }
+        if (SPEEDY_CORRECT.length === 0) fs = Math.max(17, Math.min(56, fs * 1.25));   // 未设预设答案：字号加大一号
+    }
+    if (sending) textColor = '#60a5fa';   // 本帧识别触发了发包：蓝字高亮（服务端确认后下一帧未发包自动回落常规色）
+    fs = Math.round(fs / 2) * 2;   // 字号量化到 2px 档：距离微移不触发位图重建
+    var bm = markLabelBitmap(label, fs, textColor);
+    var bx = (minX + maxX) / 2 - bm.w / 2;   // 水平居中于码面
+    var by = minY - bm.h - 6;                 // 码面上方；贴近画面顶部则画到码面内
+    if (by < 4) by = minY + 6;
+    if (bx < 4) bx = 4;
+    var vw2 = canvas._vw || canvas.width;
+    if (bx + bm.w > vw2 - 4) bx = vw2 - 4 - bm.w;
+    ctx.drawImage(bm.cv, bx, by);
+}
+
+// 由 3 个定位点重建二维码四角：夹角为直角的顶点即左上定位点，第4角按平行四边形推算；再整体外扩贴合码面
+// （举牌模式直接给出图案 4 角：按极角排序成环后微外扩 6%）
+function quadFromPts(pts) {
+    if (!pts || pts.length < 3) return null;
+    if (pts.length >= 4 && IS_RAISE) {   // 举牌模式：直接给定图案 4 角（按极角排序成环后微外扩 6%）；答题模式 4 点=3 定位点+校正点，仍走下方 3 点重建
+        var rcx = 0, rcy = 0;
+        pts.forEach(function (p) { rcx += p.x; rcy += p.y; });
+        rcx /= pts.length; rcy /= pts.length;
+        var ring = pts.slice().sort(function (a, b) {
+            return Math.atan2(a.y - rcy, a.x - rcx) - Math.atan2(b.y - rcy, b.x - rcx);
+        });
+        return ring.map(function (p) { return { x: rcx + (p.x - rcx) * 1.06, y: rcy + (p.y - rcy) * 1.06 }; });
+    }
+    function angDiff(tl, p2, p3) {
+        var v1x = p2.x - tl.x, v1y = p2.y - tl.y, v2x = p3.x - tl.x, v2y = p3.y - tl.y;
+        var d1 = Math.hypot(v1x, v1y), d2 = Math.hypot(v2x, v2y);
+        if (d1 < 1 || d2 < 1) return 1e9;
+        var dot = (v1x * v2x + v1y * v2y) / (d1 * d2);
+        return Math.abs(Math.acos(Math.max(-1, Math.min(1, dot))) - Math.PI / 2);
+    }
+    var best = 0, bestDiff = angDiff(pts[0], pts[1], pts[2]);
+    var d1 = angDiff(pts[1], pts[0], pts[2]);
+    if (d1 < bestDiff) { bestDiff = d1; best = 1; }
+    var d2 = angDiff(pts[2], pts[0], pts[1]);
+    if (d2 < bestDiff) { bestDiff = d2; best = 2; }
+    if (bestDiff > 0.35) return null;
+    var tl = pts[best], others = pts.filter(function (p, i) { return i !== best; });
+    var br = { x: others[0].x + others[1].x - tl.x, y: others[0].y + others[1].y - tl.y };
+    var cx = (tl.x + others[0].x + br.x + others[1].x) / 4;
+    var cy = (tl.y + others[0].y + br.y + others[1].y) / 4;
+    return [tl, others[0], br, others[1]].map(function (p) {
+        return { x: cx + (p.x - cx) * 1.32, y: cy + (p.y - cy) * 1.32 };
+    });
+}
+
+// 通用码面外框：定位点重建四角后描边（细框）；定位点不足时退化为外扩包围框
+function strokeQuad(ctx, pts, canvas, color, fill) {
+    if (!pts || !pts.length) return;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2.5, (canvas._vw || canvas.width) * 0.003);
+    var quad = quadFromPts(pts);
+    if (quad) {
+        ctx.beginPath();
+        ctx.moveTo(quad[0].x, quad[0].y);
+        ctx.lineTo(quad[1].x, quad[1].y);
+        ctx.lineTo(quad[2].x, quad[2].y);
+        ctx.lineTo(quad[3].x, quad[3].y);
+        ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        ctx.stroke();
+    } else {
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        pts.forEach(function (p) {
+            minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+        });
+        var ex = Math.max(20, (maxX - minX) * 0.2), ey = Math.max(20, (maxY - minY) * 0.2);
+        ctx.strokeRect(minX - ex, minY - ey, (maxX - minX) + ex * 2, (maxY - minY) + ey * 2);
+    }
+    ctx.restore();
+}
+
+// 定位点中心点 / 标记尺寸（按码面大小自适应）
+function centerOfPts(pts) {
+    if (!pts || !pts.length) return null;
+    var x = 0, y = 0;
+    pts.forEach(function (p) { x += p.x; y += p.y; });
+    return { x: x / pts.length, y: y / pts.length };
+}
+function markSize(pts, canvas) {
+    var d = 0, n = 0;
+    for (var i = 0; i < pts.length; i++) {
+        for (var j = i + 1; j < pts.length; j++) { d += Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y); n++; }
+    }
+    var base = n ? (d / n) : (canvas._vw || canvas.width) * 0.05;
+    return Math.max(26, Math.min(90, base * 0.7));
+}
+
+// 识别失败（非本班学生的码）：红色边框 + 码面中央红色 ?
+function drawFailFrame(ctx, f, canvas) {
+    var pts = f.pts;
+    if (!pts || !pts.length) return;
+    strokeQuad(ctx, pts, canvas, '#ff3b30', 'rgba(255,59,48,0.10)');
+    var c = centerOfPts(pts);
+    if (!c) return;
+    var size = markSize(pts, canvas);
+    ctx.save();
+    ctx.font = 'bold ' + size + 'px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = Math.max(3, size * 0.18);
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.strokeText('?', c.x, c.y);
+    ctx.fillStyle = '#ff3b30';
+    ctx.fillText('?', c.x, c.y);
+    ctx.restore();
+}
+
+// 登记成功：码面中央单个绿色 ✓（淡入→停留→淡出，白描边提高辨识度）
+function drawOkMark(ctx, g, now) {
+    var pts = g.pts, life = g.until - now, age = now - g.born;
+    if (!pts || !pts.length) return;
+    var c = centerOfPts(pts);
+    if (!c) return;
+    var size = markSize(pts, overlayCanvas || { width: 800 });
+    var alpha = 0.95;
+    if (age < 150) alpha *= age / 150;
+    if (life < 400) alpha *= Math.max(0, life / 400);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.font = 'bold ' + size + 'px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(4, size * 0.22);
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.strokeText('✓', c.x, c.y);
+    ctx.fillStyle = '#22c55e';
+    ctx.fillText('✓', c.x, c.y);
+    ctx.restore();
+}
+
+function showOkMark(code, pts) {
+    var now = Date.now();
+    if (!pts || !pts.length) {
+        var c = ptsCache[code];
+        if (c && now - c.ts < 3000) pts = c.pts;
+    }
+    if (pts && pts.length) {
+        okMarks.push({ pts: pts, born: now, until: now + 2600 });
+        delete pendingFlash[code];
+    } else {
+        pendingFlash[code] = now + 1500; // 位置未知：解码到该码时补显
+    }
+}
+
+// 已登记过的码（重复识别）：绿色边框，期间再次入镜持续刷新
+function showRepeatMark(code, pts) {
+    var now = Date.now();
+    repeatUntil[code] = now + 10000;
+    if ((!pts || !pts.length) && ptsCache[code] && now - ptsCache[code].ts < 3000) pts = ptsCache[code].pts;
+    if (pts && pts.length) repeatFrames.push({ pts: pts, until: now + 1200 });
+}
+
+// 非本班学生的码（识别失败）：红色边框 + 红?
+function showFailMark(code, pts) {
+    var now = Date.now();
+    if ((!pts || !pts.length) && ptsCache[code] && now - ptsCache[code].ts < 3000) pts = ptsCache[code].pts;
+    if (pts && pts.length) failFrames.push({ pts: pts, born: now, until: now + 2000 });
+}
+
+function flushPendingFlash() {
+    var now = Date.now();
+    Object.keys(pendingFlash).forEach(function (code) {
+        if (now > pendingFlash[code]) { delete pendingFlash[code]; return; }
+        var c = ptsCache[code];
+        if (c && now - c.ts < 3000) {
+            okMarks.push({ pts: c.pts, born: now, until: now + 2600 });
+            delete pendingFlash[code];
+        }
+    });
+}
+
+// ===== 弹窗评价·多码点选：画面静止，每个码中央显示绿色→圆圈，点选后登记并弹窗评价 =====
+function enterMultiSelect(choices) {
+    evalPause = true;
+    frozenFrame = frameCanvas;   // 引用当前帧快照（multiTick 已暂停，不会被覆盖重绘）
+    // 清除去重记录：点选结束后未选中的码仍可正常识别登记
+    choices.forEach(function (c) { delete scanHistory[c.code]; });
+    multiSel = choices.map(function (c) {
+        var quad = quadFromPts(c.pts), cx, cy, r;
+        if (quad) {
+            cx = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
+            cy = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
+            var w = Math.hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y);
+            var h = Math.hypot(quad[3].x - quad[0].x, quad[3].y - quad[0].y);
+            r = Math.max(18, Math.min(w, h) * 0.24);
+        } else {
+            var ctr = centerOfPts(c.pts) || { x: 0, y: 0 };
+            cx = ctr.x; cy = ctr.y; r = 30;
+        }
+        return { code: c.code, pts: c.pts, cx: cx, cy: cy, r: r };
+    });
+    appendLog(true, '画面中出现 ' + multiSel.length + ' 个' + (IS_RAISE ? '举牌卡' : '二维码') + '，画面已静止，请点击要评价的学生' + (IS_RAISE ? '卡' : '码') + '（绿色→圆圈）');
+}
+
+function exitMultiSelect() {
+    multiSel = null;
+    frozenFrame = null;
+}
+
+function drawMultiSelect(ctx, canvas) {
+    var vw2 = canvas._vw || canvas.width, vh2 = canvas._vh || canvas.height;
+    if (frozenFrame) ctx.drawImage(frozenFrame, 0, 0, vw2, vh2);
+    else { ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillRect(0, 0, vw2, vh2); }
+    multiSel.forEach(function (m) {
+        strokeQuad(ctx, m.pts, canvas, '#2f7bff', null);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(m.cx, m.cy, m.r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(34,197,94,0.92)';
+        ctx.fill();
+        ctx.lineWidth = Math.max(3, m.r * 0.12);
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+        // 白色向右箭头 →
+        var a = m.r * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(m.cx - a, m.cy);
+        ctx.lineTo(m.cx + a * 0.55, m.cy);
+        ctx.moveTo(m.cx + a * 0.15, m.cy - a * 0.4);
+        ctx.lineTo(m.cx + a * 0.55, m.cy);
+        ctx.lineTo(m.cx + a * 0.15, m.cy + a * 0.4);
+        ctx.lineWidth = Math.max(3, m.r * 0.16);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+        ctx.restore();
+    });
+}
+
+// 点选交互：点击绿色圆圈选中该码；弹窗评价关闭后自动恢复识别
+(function () {
+    var host = document.getElementById('qr-reader');
+    if (!host) return;
+    host.addEventListener('click', function (e) {
+        if (!multiSel) return;
+        var canvas = overlayCanvas;
+        var video = document.querySelector('#qr-reader video');
+        var rect = (video && video.getBoundingClientRect) ? video.getBoundingClientRect() : host.getBoundingClientRect();
+        if (!canvas || !rect || !rect.width) return;
+        var x = (e.clientX - rect.left) / rect.width * (canvas._vw || canvas.width);
+        var y = (e.clientY - rect.top) / rect.height * (canvas._vh || canvas.height);
+        var idx = -1;
+        for (var i = 0; i < multiSel.length; i++) {
+            var dx = x - multiSel[i].cx, dy = y - multiSel[i].cy, rr = multiSel[i].r * 1.6;
+            if (dx * dx + dy * dy <= rr * rr) { idx = i; break; }
+        }
+        if (idx < 0) return;   // 点在码面外：不动作，保持点选状态
+        var ch = multiSel[idx];
+        exitMultiSelect();     // 停止点选绘制；识别仍暂停，直至评价弹窗关闭
+        scanHistory[ch.code] = swOn('swContinuous') ? 'sticky' : Date.now();
+        doRegister(ch.code, { pts: ch.pts });
+    });
+})();
+
+// ===== 举牌模式：6x6 黑白图案识别（自定义简易码，比二维码更大更耐识别、高速识别） =====
+// 码本：255 个 6x6 图案（编号 1..255，每生一码，与「全班举牌卡」打印一致）
+// 位约定：bit=1 白格 0 黑格，bit 索引=(5-row)*6+col；码本约束：任两图案（含自身不同旋转）汉明距离>=8
+// → 观测误差 <=3 格时最近匹配必正确（编号与案边朝向均抗误读）；匹配阈值取 3
+var RAISE_ROWS = (function () {   // RAISE_ROWS[no] = [4][6] 每行 6 位整数（bit5=最左列），[k]=顺时针旋转 k*90°
+    var rowsOf = [];
+    function rotRows(rr) {        // 行表示顺时针旋转 90°：new[r][c]=old[5-c][r] → new 行 R 的位 c = old 行 (5-新位)…见下
+        var out = [0, 0, 0, 0, 0, 0];
+        for (var R = 0; R < 6; R++) {
+            var v = 0;
+            for (var c = 0; c < 6; c++) if ((rr[c] >> (5 - R)) & 1) v |= (1 << c);
+            out[R] = v;
+        }
+        return out;
+    }
+    try {
+        var hex = "2c2c0101aae20200431ca0010630400090ef0d5043041403061c60cd010082ce388000197c30600044d20a0888c73041400c0904114306580041786d0001294040406d30c14418290608a1059932801230c62080823e792008800005431e3e01888071a2180092e3cd141010eaa00410c00100c79e9220082abc24100a8be202020a7090008e73b290300643412c01c1070c006c35c18314804570004b82610c30259c79200081650610e1141c00c3b400c30d8706820093f072003a782220014dfe1c06102cc418c1c21601831c311d103884390ca00873c74800945f9800023cfd3182000e3c400268821406197c408220bbe009209f0b4003093de78001b0cf804201b3a09840a3dbac200570ee0ac0441a0b058c83ac98609281ed06082cbcba000863de5800a06401509b690516088f2000171f73ac1210c3c00123c737d16c1040e300388a3cf584002e1a01a0c773e3001ce1c602e1c38022c4b8739e6820871ef9841050c60401a3f7c401087b3c3940839feb0110098c30359704c10671e19c480227d0cf921047870c301ae4c09413c78f0d208e10554e5073fcf80024c94d340a396880029fff3d610580a00231df37000c9a6f038e01e3d1db0e0c32c751210d3ff0480aa2bc106414fbcf4400c30c386b06dc24c22c3ebe71c0482019a00aff8694078cba03cc38f8ff8d40281ffe200231ec32804bb063c608bf7c70c39a00e15c447bffb0a08600328451ff043ef9c30c61df01310c01e0afffa08e3a60e31c780d1a80833ef88614017dfbe3050467ef38004b60208b9e7fec3050e3e873c431c78048c79efd718328e37df048075d718e8073203869b3ff610c987c17102ce3f027879f38f398071c3c2d00aabfe71c6323845100f3dfcf008747d3c738094fe7cd50033824828fbffefb80029dc30248ff8e7845c752c9025bef84db019f77c5069ae9cf30079f1cd1069a7bc02c63be7fc71210cfffb642023fc6021b3e3c73e30360c5829cffb21cf0d3cde306307bcf3873055d618063effb00711f72430f9ef9df78c30c3fcf0023af803831fff3cf04b2cfbef87982426b870fbc541a21f7ff31ac15e3f09060f7f9f3072c3d8071f3cf9f680e8b3ec318632fff38f38e30fc3cf3061cf4036d3ede48039fffe3de00cbff70b00d7fb20027ffdc19c05ffff75c005d8778750fbcf8c8a8effd5002efbff2ca0877fdd020de7df3025b3df71f402e7ae387703fef3dd403afe683107fff78a09a6c370d783fe25049ffffdf6c1871df6da05c7701467bff0039ef9ffffbac0157cf78e933cdb0eb0ebed41d64b7fef8243afbffaeb08a9ffff14013bc80b39ffe3bef1e218c09f3df78f304fbcfdf583782f9f18f70cfecb8e3c3ffe3c035f7e3dc388ffcd71b0fbefe7de4865fbeb802fbbe6930df7ff6832fb8df12c17df9cf878f3df7586d34ff2602f3ffde3cf9c3cfbe321d7cffe8a0eb3073df787bffde310f8fb2c26de7fffef2111e3b8eb8effb4c74e7def3e79e437cf3e38f9fff7c0ac3ffbc3492fa20c7dfffefbc7b82efffee3a80fffe74c60fffedb028ffdf30c87fff36883dff1cf3e23de7aeb8673cb836dfffcc07de7b9e38f8eff";
+        if (hex.length !== 255 * 9) return rowsOf;
+        for (var no = 1; no <= 255; no++) {
+            var off = (no - 1) * 9;
+            var hi = parseInt(hex.substr(off, 5), 16);      // 高 20 位（36 位码拆两段避免 32 位截断）
+            var lo = parseInt(hex.substr(off + 5, 4), 16);  // 低 16 位
+            var rr = [];
+            for (var r = 0; r < 6; r++) {
+                var v = 0;
+                for (var c = 0; c < 6; c++) {
+                    var idx = (5 - r) * 6 + c;              // 码内位索引
+                    var bit = idx < 20 ? ((hi >> (19 - idx)) & 1) : ((lo >> (35 - idx)) & 1);
+                    if (bit) v |= (1 << (5 - c));           // 行整数：bit(5-c)=该格（白=1）
+                }
+                rr.push(v);
+            }
+            var rots = [rr];
+            for (var k = 1; k < 4; k++) { rr = rotRows(rr); rots.push(rr); }
+            rowsOf[no] = rots;
+        }
+    } catch (e) {}
+    return rowsOf;
+})();
+var RAISE_POP6 = (function () {   // 6 位弹夹表
+    var t = [0];
+    for (var i = 1; i < 64; i++) t[i] = t[i >> 1] + (i & 1);
+    return t;
+})();
+var RAISE_OPTS = ['C', 'B', 'A', 'D']; // 实测校准：整体偏移恰为 180°（打印 A 边朝上曾识别成 C、B→D、C→A、D→B），
+                                       // 故按匹配旋转档 k+2 映射；物理约定不变：所选字母所在边转到正上方出示
+
+// 单画布举牌识别（远距离/弱光/倾斜鲁棒版）：
+//   灰度→全局 Otsu 粗二值→暗色连通域（8连通）；
+//   Pass A：逐组件直接匹配——码本黑格 4-连通成单一连续块，图案本身即一个组件，
+//           选项文字/姓名是独立小组件不会并入（避免簇 bbox 被文字撑大导致网格取样全错）；
+//   Pass B：Pass A 无匹配→近邻合并成簇再匹配（容忍阴影/反光把图案割裂）；
+//   Pass C：倾斜救援——手持卡片常带 ±6°~20° 倾斜，轴对齐网格远格会错位读成邻格，
+//           把候选 bbox 旋正到工作画布后递归识别；
+//   每候选：bbox 外扩半格做局部 Otsu 重二值（光照自适应），灰度积分图按格取均值判黑白。
+// 返回 [{no, opt, dist, pts:[四角]}]（画布坐标系）；判定阈值：最小格 ≥7px 允许 dist≤3，否则 ≤2
+var raiseBufs = [];   // 双缓冲复用：主帧 + 倾斜救援工作画布交替，避免每帧重复分配几十 MB
+function raiseBufFor(W, H) {
+    for (var i = 0; i < raiseBufs.length; i++) {
+        if (raiseBufs[i] && raiseBufs[i].W === W && raiseBufs[i].H === H) return raiseBufs[i];
+    }
+    var b = {
+        W: W, H: H,
+        gray: new Uint8Array(W * H), hist: new Uint32Array(256),
+        dark: new Uint8Array(W * H), visited: new Uint8Array(W * H),
+        stack: new Int32Array(W * H), IG: new Float64Array((W + 1) * (H + 1))
+    };
+    if (raiseBufs.length >= 2) raiseBufs.shift();
+    raiseBufs.push(b);
+    return b;
+}
+function raiseScanCanvas(canvas, noTilt) {
+    var W = canvas.width, H = canvas.height;
+    if (W < 60 || H < 60) return [];
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    var data = ctx.getImageData(0, 0, W, H).data;
+    var N = W * H;
+    var B = raiseBufFor(W, H);
+    var gray = B.gray, hist = B.hist, dark = B.dark,
+        visited = B.visited, stack = B.stack, IG = B.IG;
+    hist.fill(0); visited.fill(0);
+    for (var i = 0, p = 0; i < N; i++, p += 4) {
+        var g = (data[p] * 77 + data[p + 1] * 150 + data[p + 2] * 29) >> 8;
+        gray[i] = g;
+        hist[g]++;
+    }
+    // Otsu 全局阈值（前景=图案黑格，背景=白纸/桌面）；纯黑白无中间灰阶时 Otsu 会退化取 0，
+    // 此时回退为「最低/最高灰度中点」（该情形下类间方差在中间任一阈值处同为最大）
+    var sum = 0;
+    var gmin = -1, gmax = -1;
+    for (var t = 0; t < 256; t++) {
+        if (!hist[t]) continue;
+        if (gmin < 0) gmin = t;
+        gmax = t;
+        sum += t * hist[t];
+    }
+    var sumB = 0, wB = 0, maxVar = -1, thr = 128;
+    for (var t2 = 0; t2 < 256; t2++) {
+        wB += hist[t2];
+        if (!wB) continue;
+        var wF = N - wB;
+        if (!wF) break;
+        sumB += t2 * hist[t2];
+        var mB = sumB / wB, mF = (sum - sumB) / wF;
+        var between = wB * wF * (mB - mF) * (mB - mF);
+        if (between > maxVar) { maxVar = between; thr = t2; }
+    }
+    if (thr <= gmin) thr = Math.round((gmin + gmax) / 2);
+    // 灰度积分图：格均值取样 + 局部 Otsu（按灰度均值判黑白，抗边缘锯齿与局部阴影）
+    for (var y = 0; y < H; y++) {
+        var rowSum = 0;
+        for (var x = 0; x < W; x++) {
+            rowSum += gray[y * W + x];
+            IG[(y + 1) * (W + 1) + (x + 1)] = IG[y * (W + 1) + (x + 1)] + rowSum;
+        }
+    }
+    // 暗色连通域（8 连通 BFS），记录 bbox/面积（忽略极小噪声）
+    for (var d2 = 0; d2 < N; d2++) dark[d2] = gray[d2] < thr ? 1 : 0;
+    var comps = [];
+    var minComp = Math.max(16, (W * H) >> 15);   // 噪声下限：小图 16px，大图按面积放大
+    for (var s0 = 0; s0 < N; s0++) {
+        if (!dark[s0] || visited[s0]) continue;
+        var sp = 0;
+        stack[sp++] = s0;
+        visited[s0] = 1;
+        var minX = W, minY = H, maxX = 0, maxY = 0, area = 0;
+        while (sp > 0) {
+            var cur = stack[--sp];
+            var cy2 = (cur / W) | 0, cx2 = cur - cy2 * W;
+            area++;
+            if (cx2 < minX) minX = cx2;
+            if (cx2 > maxX) maxX = cx2;
+            if (cy2 < minY) minY = cy2;
+            if (cy2 > maxY) maxY = cy2;
+            for (var dy = -1; dy <= 1; dy++) {
+                var ny = cy2 + dy;
+                if (ny < 0 || ny >= H) continue;
+                for (var dx = -1; dx <= 1; dx++) {
+                    var nx = cx2 + dx;
+                    if (nx < 0 || nx >= W) continue;
+                    var ni = ny * W + nx;
+                    if (dark[ni] && !visited[ni]) { visited[ni] = 1; stack[sp++] = ni; }
+                }
+            }
+        }
+        if (area >= minComp) comps.push({ x0: minX, y0: minY, x1: maxX, y1: maxY, a: area });
+    }
+    if (!comps.length) return [];
+    // 格黑白判定：中心 50% 区域灰度均值 ≥ 局部阈值 t 判白
+    function cellWhite(x, y, cw, ch, t) {
+        var sx0 = Math.max(0, Math.round(x + cw * 0.25)), sy0 = Math.max(0, Math.round(y + ch * 0.25));
+        var sx1 = Math.min(W, Math.round(x + cw * 0.75)), sy1 = Math.min(H, Math.round(y + ch * 0.75));
+        if (sx1 <= sx0 || sy1 <= sy0) return 0;
+        var s = IG[sy1 * (W + 1) + sx1] - IG[sy0 * (W + 1) + sx1] - IG[sy1 * (W + 1) + sx0] + IG[sy0 * (W + 1) + sx0];
+        return s / ((sy1 - sy0) * (sx1 - sx0)) >= t ? 1 : 0;
+    }
+    // bbox 外扩约半格的局部 Otsu（白纸边 + 黑格 → 可靠双峰；大 bbox 隔点采样省 CPU）
+    function localThr(bx0, by0, bx1, by1) {
+        var mg = Math.max(2, Math.round(Math.max(bx1 - bx0, by1 - by0) / 12));
+        var ex0 = Math.max(0, bx0 - mg), ey0 = Math.max(0, by0 - mg);
+        var ex1 = Math.min(W - 1, bx1 + mg), ey1 = Math.min(H - 1, by1 + mg);
+        var h2 = new Uint32Array(256), cnt = 0, ts = 0, tn = -1, tx = -1;
+        var step = Math.max(1, Math.round(Math.sqrt((ex1 - ex0 + 1) * (ey1 - ey0 + 1) / 100000)));
+        for (var yy = ey0; yy <= ey1; yy += step) {
+            var base = yy * W;
+            for (var xx = ex0; xx <= ex1; xx += step) {
+                var v = gray[base + xx];
+                h2[v]++; cnt++; ts += v;
+                if (tn < 0 || v < tn) tn = v;
+                if (v > tx) tx = v;
+            }
+        }
+        if (!cnt) return thr;
+        var sB = 0, wB = 0, mv = -1, tc = thr;
+        for (var t2 = 0; t2 < 256; t2++) {
+            wB += h2[t2];
+            if (!wB) continue;
+            var wF = cnt - wB;
+            if (!wF) break;
+            sB += t2 * h2[t2];
+            var mB = sB / wB, mF = (ts - sB) / wF;
+            var bt = wB * wF * (mB - mF) * (mB - mF);
+            if (bt > mv) { mv = bt; tc = t2; }
+        }
+        if (tc <= tn) tc = Math.round((tn + tx) / 2);
+        return tc;
+    }
+    // 对给定 bbox 做网格假设匹配：枚举黑块跨度 4~6 行列及偏移，255×4 旋转码本最近汉明。
+    // 次优距 d2 与最优取自同一网格假设——固定采样下码本两两（含旋转）距离 ≥8 才成立，
+    // 真卡读数大幅领先次优；倾斜卡轴对齐凑出的巧合邻码在其偶然网格上与真码贴近，据此判伪
+    function matchGrid(bx0, by0, bx1, by1) {
+        var w = bx1 - bx0 + 1, h = by1 - by0 + 1;
+        var t = localThr(bx0, by0, bx1, by1);
+        var best = { dist: 99, d2: 99, no: 0, k: 0, x0: 0, y0: 0, cw: 0, ch: 0 };
+        for (var n = 4; n <= 6; n++) {
+            for (var m = 4; m <= 6; m++) {
+                var cw = w / n, ch = h / m;
+                if (cw < 4 || ch < 4) continue;
+                for (var oy = 0; oy <= 6 - m; oy++) {
+                    for (var ox = 0; ox <= 6 - n; ox++) {
+                        var gx0 = bx0 - ox * cw, gy0 = by0 - oy * ch;
+                        var obs = [0, 0, 0, 0, 0, 0];
+                        for (var r = 0; r < 6; r++) {
+                            var v = 0;
+                            for (var cc = 0; cc < 6; cc++) {
+                                if (cellWhite(gx0 + cc * cw, gy0 + r * ch, cw, ch, t)) v |= (1 << (5 - cc));
+                            }
+                            obs[r] = v;
+                        }
+                        var b1 = 99, b1no = 0, b1k = 0, b2 = 99;
+                        for (var no2 = 1; no2 <= 255; no2++) {
+                            var rots = RAISE_ROWS[no2];
+                            if (!rots) continue;
+                            for (var k2 = 0; k2 < 4; k2++) {
+                                var bk = rots[k2];
+                                var dd = RAISE_POP6[obs[0] ^ bk[0]] + RAISE_POP6[obs[1] ^ bk[1]] + RAISE_POP6[obs[2] ^ bk[2]]
+                                       + RAISE_POP6[obs[3] ^ bk[3]] + RAISE_POP6[obs[4] ^ bk[4]] + RAISE_POP6[obs[5] ^ bk[5]];
+                                if (dd < b1) { b2 = b1; b1 = dd; b1no = no2; b1k = k2; }
+                                else if (dd < b2) b2 = dd;
+                            }
+                        }
+                        if (b1 < best.dist || (b1 === best.dist && b2 - b1 > best.d2 - best.dist)) {
+                            best = { dist: b1, d2: b2, no: b1no, k: b1k, x0: gx0, y0: gy0, cw: cw, ch: ch };
+                        }
+                        if (best.dist === 0 && best.d2 - best.dist >= 4) return best;   // 干净且大幅领先：提前收手
+                    }
+                }
+            }
+        }
+        return best;
+    }
+    var dets = [];
+    function ptsOf(b) {
+        return [
+            { x: b.x0, y: b.y0 },
+            { x: b.x0 + b.cw * 6, y: b.y0 },
+            { x: b.x0 + b.cw * 6, y: b.y0 + b.ch * 6 },
+            { x: b.x0, y: b.y0 + b.ch * 6 }
+        ];
+    }
+    var suspects = [];   // 无法干净判定的候选 bbox：交 Pass C 角度扫描定夺
+    function tryAccept(b, box) {
+        // 仅 d0 干净读取直接采信（d0 时次优距 ≥8 码本保证）；d1 绝不直接采信——
+        // 倾斜卡轴对齐采样凑巧落进某邻码 d1 时，单网格假设下次优距恒 ≥6 防不住，
+        // 必须转 suspects 交 Pass C 旋转验证（真卡近角会读出 d0，凑巧邻码则读不出）
+        if (b.dist === 0 && b.d2 >= 4) dets.push({ no: b.no, opt: RAISE_OPTS[b.k], dist: b.dist, pts: ptsOf(b) });
+        else suspects.push(box);
+    }
+    // Pass A：逐组件直接匹配（近方形、bbox ≥22px；按面积取前 32 防病态画面拖垮 CPU）。
+    // 码本黑格 4-连通成单一连续块 → 图案本身即一个组件，选项文字/姓名是独立小组件不会并入
+    var cands = comps.filter(function (c) {
+        var w = c.x1 - c.x0 + 1, h = c.y1 - c.y0 + 1;
+        if (w < 22 || h < 22) return false;
+        if (w > W * 0.95 && h > H * 0.95) return false;   // 全帧暗背景（桌面/黑板）非卡片
+        var asp = w / h;
+        return asp >= 0.45 && asp <= 2.2;
+    });
+    cands.sort(function (p, q) { return q.a - p.a; });
+    cands = cands.slice(0, 32);
+    cands.forEach(function (c) { tryAccept(matchGrid(c.x0, c.y0, c.x1, c.y1), c); });
+    // Pass B：近邻合并成簇再匹配（容忍阴影/反光把图案割裂；bbox 或被邻近文字撑大 → Pass C 校正）
+    var merged = comps.map(function (c) { return { x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1 }; });
+    var changed = true;
+    while (changed) {
+        changed = false;
+        var out = [];
+        for (var a = 0; a < merged.length; a++) {
+            var A = merged[a];
+            if (!A) continue;
+            for (var b = a + 1; b < merged.length; b++) {
+                var B2 = merged[b];
+                if (!B2) continue;
+                var ma = Math.max(2, Math.round(Math.max(A.x1 - A.x0, A.y1 - A.y0) * 0.55));
+                var mb = Math.max(2, Math.round(Math.max(B2.x1 - B2.x0, B2.y1 - B2.y0) * 0.55));
+                if (A.x0 - ma > B2.x1 || B2.x0 - mb > A.x1 || A.y0 - ma > B2.y1 || B2.y0 - mb > A.y1) continue;
+                A.x0 = Math.min(A.x0, B2.x0); A.y0 = Math.min(A.y0, B2.y0);
+                A.x1 = Math.max(A.x1, B2.x1); A.y1 = Math.max(A.y1, B2.y1);
+                merged[b] = null;
+                changed = true;
+            }
+            out.push(A);
+        }
+        merged = out;
+    }
+    merged.forEach(function (c) {
+        var w = c.x1 - c.x0 + 1, h = c.y1 - c.y0 + 1;
+        if (w < 34 || h < 34) return;
+        if (w > W * 0.95 && h > H * 0.95) return;
+        var asp = w / h;
+        if (asp < 0.45 || asp > 2.2) return;
+        tryAccept(matchGrid(c.x0, c.y0, c.x1, c.y1), c);
+    });
+    // Pass C：角度扫描——手持卡片常带 ±6°~20° 倾斜，轴对齐取样远格会错位读成邻格。
+    // 把候选 bbox（外扩一圈保留白纸护城河）旋正到工作画布后递归识别；工作画布必须先填
+    // 不透明底色：旋转后四角若留透明像素（灰度 0）会与图案黑格连成整幅巨型组件，
+    // 递归识别必然失败。旋正后 sub 结果已经过次优距防伪，0° 干净匹配可直接采信
+    if (suspects.length && !noTilt) {
+        suspects.sort(function (p, q) {
+            return (p.x1 - p.x0 + 1) * (p.y1 - p.y0 + 1) - (q.x1 - q.x0 + 1) * (q.y1 - q.y0 + 1);
+        });
+        var wcv = document.createElement('canvas');
+        var wctx = wcv.getContext('2d', { willReadFrequently: true });
+        var inDets = function (no) {
+            for (var i = 0; i < dets.length; i++) if (dets[i].no === no) return true;
+            return false;
+        };
+        var ANGS = [6, -6, 3, -3, 9, -9, 12, -12, 15, -15, 18, -18];   // 3° 步进覆盖手持常见 ±18°
+        for (var si = 0; si < suspects.length && si < 8; si++) {
+            var sc0 = suspects[si];
+            // 源区域外扩约 15%（≥8px）：把图案四周的白纸一并带入，即使 Otsu 把灰背景判暗，
+            // 白纸护城河也能隔开背景巨型组件与图案黑格
+            var padC = Math.max(8, Math.round(Math.min(sc0.x1 - sc0.x0 + 1, sc0.y1 - sc0.y0 + 1) * 0.15));
+            var sx0 = Math.max(0, sc0.x0 - padC), sy0 = Math.max(0, sc0.y0 - padC);
+            var sx1 = Math.min(W - 1, sc0.x1 + padC), sy1 = Math.min(H - 1, sc0.y1 + padC);
+            var tw = sx1 - sx0 + 1, thh = sy1 - sy0 + 1;
+            var side = Math.ceil(Math.sqrt(tw * tw + thh * thh)) + 8;
+            var cxS = (sx0 + sx1) / 2, cyS = (sy0 + sy1) / 2;
+            var sweepAt = function (rad) {   // 填底色 → 旋正 bbox 区域 → 递归识别 → 坐标映射回原画布
+                wcv.width = side; wcv.height = side;
+                wctx.fillStyle = '#ffffff';
+                wctx.fillRect(0, 0, side, side);
+                wctx.save();
+                wctx.translate(side / 2, side / 2);
+                wctx.rotate(rad);
+                wctx.drawImage(canvas, sx0, sy0, tw, thh, -tw / 2, -thh / 2, tw, thh);
+                wctx.restore();
+                var sub = raiseScanCanvas(wcv, true);
+                if (!sub.length) return null;
+                var d = sub[0];   // 递归内已按 dist 排序去重
+                var cosB = Math.cos(-rad), sinB = Math.sin(-rad);
+                d.pts = d.pts.map(function (p) {
+                    var dx = p.x - side / 2, dy = p.y - side / 2;
+                    return { x: cxS + dx * cosB - dy * sinB, y: cyS + dx * sinB + dy * cosB };
+                });
+                return d;
+            };
+            var r0 = sweepAt(0);
+            if (r0 && r0.dist === 0) {
+                if (inDets(r0.no)) continue;                   // 已识别过：无需再扫
+                dets.push(r0);                                 // 旋正后 0° 干净匹配 + 子扫描已过防伪
+                continue;
+            }
+            // 0° 无 d0 干净匹配：3° 步进非零角全量扫描。倾斜卡 0° 轴对齐采样常凑巧读成邻码
+            // （d1）并在相邻角同样凑巧（两角度互证会误选），真容在非零角读 d0——必须扫完再按
+            // 距离决策（d0 优先、同距多角度互证优先），不能首个互证就收手
+            var byNo = {};
+            function addRes(s2, ang) {
+                if (!s2 || s2.dist > 3) return;
+                s2.ang = ang;
+                var e = byNo[s2.no] || (byNo[s2.no] = { cnt: 0, best: null });
+                e.cnt++;
+                if (!e.best || s2.dist < e.best.dist) e.best = s2;
+            }
+            if (r0) addRes(r0, 0);
+            for (var ai2 = 0; ai2 < ANGS.length; ai2++) {
+                addRes(sweepAt(ANGS[ai2] * Math.PI / 180), ANGS[ai2]);
+                var solid = false;                     // 提前收手：同编号两个角度都读 d0，无歧义
+                for (var noE in byNo) {
+                    var eE = byNo[noE];
+                    if (eE.cnt >= 2 && eE.best.dist === 0) { solid = true; break; }
+                }
+                if (solid) break;
+            }
+            var cands = [];
+            for (var no6 in byNo) cands.push(byNo[no6]);
+            cands.sort(function (p, q) {   // 距离优先 → 多角度互证优先 → 0° 原读数优先（防旋转凑巧同距顶替）
+                return (p.best.dist - q.best.dist) || (q.cnt - p.cnt) || ((p.best.ang !== 0) - (q.best.ang !== 0));
+            });
+            var chosen = null;
+            for (var ci = 0; ci < cands.length && !chosen; ci++) {
+                var e5 = cands[ci];
+                if (inDets(e5.best.no)) continue;
+                if (e5.best.dist === 0) chosen = e5.best;                                        // 单角 d0（子扫描已过防伪）
+                else if (e5.cnt >= 2 && e5.best.dist <= 2) chosen = e5.best;                     // 两角度互证
+                else if (e5.cnt === 1 && e5.best.ang !== 0 && e5.best.dist <= 1) chosen = e5.best; // 单非零角 d1
+            }
+            if (!chosen && r0 && r0.dist <= 1) chosen = r0;   // 兜底：扫不出更好时保留 0° 边缘匹配
+            if (chosen && !inDets(chosen.no)) dets.push(chosen);
+        }
+    }
+    // 同编号去重（保留距离最小者）
+    dets.sort(function (p, q) { return p.dist - q.dist; });
+    var seen = {};
+    return dets.filter(function (d) {
+        if (seen[d.no]) return false;
+        seen[d.no] = 1;
+        return true;
+    });
+}
+
+// 照片文件 → 缩放画布（举牌/二维码共用）
+function imageFileToCanvas(file, maxSide) {
+    return new Promise(function (resolve, reject) {
+        var url = URL.createObjectURL(file);
+        var img = new Image();
+        img.onload = function () {
+            URL.revokeObjectURL(url);
+            var scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+            var canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+            canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+            var ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas);
+        };
+        img.onerror = function () { URL.revokeObjectURL(url); reject(); };
+        img.src = url;
+    });
+}
+
+// ===== 摄像头 =====
+var camDevices = [], camCurId = null, camBusy = false, userStopped = false;
+// 设备清单（权限授予后 label 可见）：≥2 个摄像头时显示下拉框（选中立即切换）+ 轮切按钮
+function refreshCamList() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return Promise.resolve([]);
+    return navigator.mediaDevices.enumerateDevices().then(function (ds) {
+        camDevices = ds.filter(function (d) { return d.kind === 'videoinput'; });
+        var sel = document.getElementById('camSelect'), btn = document.getElementById('camCycleBtn');
+        if (sel && btn) {
+            if (camDevices.length > 1) {
+                var html = '';
+                for (var i = 0; i < camDevices.length; i++) {
+                    var d = camDevices[i];
+                    html += '<option value="' + d.deviceId + '">' + (d.label || ('摄像头 ' + (i + 1))) + '</option>';
+                }
+                sel.innerHTML = html;
+                if (camCurId) sel.value = camCurId;
+                sel.style.display = ''; btn.style.display = '';
+            } else { sel.style.display = 'none'; btn.style.display = 'none'; }
+        }
+        return camDevices;
+    }).catch(function () { return []; });
+}
+// 切换摄像头：停当前流 → 以指定设备按当前清晰度档位重启（见 CAM_TIERS/startScan）
+function switchCam(id) {
+    if (!id || id === camCurId || camBusy) return;
+    if (scanning && html5QrCode) {
+        camBusy = true;
+        stopOverlay();
+        if (multiTimer) { clearTimeout(multiTimer); multiTimer = null; }
+        scanning = false;
+        html5QrCode.stop().then(function () { camBusy = false; startScan(id); }).catch(function () { camBusy = false; startScan(id); });
+    } else {
+        startScan(id);
+    }
+}
+// 多摄像头轮切：当前设备的下一个
+function cycleCam() {
+    if (camDevices.length < 2) return;
+    var idx = 0;
+    for (var i = 0; i < camDevices.length; i++) if (camDevices[i].deviceId === camCurId) { idx = i; break; }
+    var next = camDevices[(idx + 1) % camDevices.length];
+    var sel = document.getElementById('camSelect');
+    if (sel) sel.value = next.deviceId;
+    switchCam(next.deviceId);
+}
+// ===== 识别清晰度档位（取流分辨率 + 抓帧解码宽度联动：档位越高识别距离越远，但取流/解码开销越大越易滞后） =====
+// 普通=1K(≤6m)、高清=2K(≤8m)、超清=4K(≤10m)；默认高清 2K——4K 取流/解码开销大，是低端机「响应不过来」的滞后主因
+var CAM_TIERS = [
+    { w: 1280, h: 720, qr: 800, raise: 1200, label: '普通 ≤6m' },
+    { w: 1920, h: 1080, qr: 1000, raise: 2000, label: '高清 ≤8m' },
+    { w: 3840, h: 2160, qr: 1400, raise: 2800, label: '超清 ≤10m' }
+];
+var camTier = 1;   // 当前档位：0=普通 1=高清(默认) 2=超清；localStorage 记忆手动选择
+try {
+    var _camTierSaved = parseInt(localStorage.getItem('qj_cam_tier'), 10);
+    if (_camTierSaved >= 0 && _camTierSaved < CAM_TIERS.length) camTier = _camTierSaved;
+} catch (e) {}
+function camTierMeta() { return CAM_TIERS[camTier] || CAM_TIERS[1]; }
+function renderCamTierBtn() {
+    var b = document.getElementById('btnCamTier');
+    if (b) b.textContent = '📼 ' + camTierMeta().label;
+}
+function applyTierConstraints() {   // 点档位按钮即时对流应用新分辨率（设备不支持 applyConstraints 时由调用方重启摄像头兜底）
+    var video = document.querySelector('#qr-reader video');
+    var track = (video && video.srcObject) ? video.srcObject.getVideoTracks()[0] : null;
+    if (!track || !track.applyConstraints) return Promise.reject(new Error('no track'));
+    var m = camTierMeta();
+    return track.applyConstraints({ width: { ideal: m.w }, height: { ideal: m.h } });
+}
+function cycleCamTier() {
+    camTier = (camTier + 1) % CAM_TIERS.length;
+    try { localStorage.setItem('qj_cam_tier', String(camTier)); } catch (e) {}
+    renderCamTierBtn();
+    var m = camTierMeta();
+    appendLog(true, '📼 识别清晰度切换为【' + m.label + '】（取流 ' + m.w + '×' + m.h + '）');
+    showToast('📼 识别清晰度：' + m.label);
+    if (scanning) applyTierConstraints().catch(function () { restartCameraAuto(); });   // 实时切换；不支持则重启摄像头应用新档位
+}
+renderCamTierBtn();
+
+// ===== 画面看门狗：部分低端手机高分辨率视频流会出现两类异常 =====
+// ① 显示白屏/花屏但识别仍正常（GPU 合成层被系统回收）：droppedVideoFrames 占比过高 → 切换 canvas 兼容显示
+//    （video 保持 opacity 0.01 持续解码，显示改由低分辨率画布承担，识别抓帧分辨率与精度完全不变）
+// ② 视频流数据停滞（currentTime 连续 ~4 秒不增长）：自动重开摄像头；会话内反复停滞则降为 1080p 重开
+var stallTimer = null, lastVideoTime = -1, stallCount = 0, dropHeavy = 0, camRestartCount = 0;
+var camFallbackDisplay = false;   // 兼容显示模式开关
+var fallbackCanvas = null, fallbackCtx = null, fallbackRaf = 0, fallbackTick = 0;
+function startVideoWatchdog() {
+    if (stallTimer) return;
+    stallTimer = setInterval(videoWatchdog, 2000);
+}
+function videoWatchdog() {
+    if (!scanning) return;
+    var video = document.querySelector('#qr-reader video');
+    if (!video || video.readyState < 2) return;
+    if (camFallbackDisplay) applyFallbackDisplay(video);
+    // 数据流停滞检测
+    var t = video.currentTime;
+    if (lastVideoTime < 0 || t > lastVideoTime + 0.001) { lastVideoTime = t; stallCount = 0; }
+    else if (t === lastVideoTime) {
+        stallCount++;
+        if (stallCount >= 2) {   // 连续两次检查无增长：视频流已停滞
+            stallCount = 0; lastVideoTime = -1;
+            appendLog(false, '⚠ 检测到画面数据停滞，自动重开摄像头…');
+            restartCameraAuto();
+            return;
+        }
+    } else { lastVideoTime = t; stallCount = 0; }
+    // 显示层掉帧检测（Chrome/安卓）：dropped 占比过高 = GPU 合成吃紧（白屏/花屏根源）
+    if (!camFallbackDisplay && video.getVideoPlaybackQuality) {
+        try {
+            var q = video.getVideoPlaybackQuality();
+            if (q.totalVideoFrames > 60 && q.droppedVideoFrames / q.totalVideoFrames > 0.6) {
+                dropHeavy++;
+                if (dropHeavy >= 2) enableFallbackDisplay();
+            } else dropHeavy = 0;
+        } catch (e) {}
+    }
+}
+function restartCameraAuto() {
+    var savedSent = lastSentOpt;   // 看门狗自动重启：备份已提交选项记录（stopScan 会清空），重启后未变化的码不重发
+    stopScan();
+    lastSentOpt = savedSent;
+    userStopped = false;   // 看门狗自动重启：不视为用户主动停止
+    camRestartCount++;
+    if (camRestartCount >= 2 && camTier > 1) {
+        camTier = 1;   // 反复停滞：自动降为高清 2K 档（低档取流更稳更流畅）
+        try { localStorage.setItem('qj_cam_tier', '1'); } catch (e) {}
+        renderCamTierBtn();
+        appendLog(false, '⚠ 摄像头反复停滞，已降为【高清 2K】档位重开（保证流畅）');
+    }
+    setTimeout(function () {
+        if (scanning || camBusy) { setTimeout(function () { startScan(camCurId); }, 800); return; }   // stop 未完成时再等一拍
+        startScan(camCurId);
+    }, 500);
+}
+function enableFallbackDisplay() {
+    camFallbackDisplay = true;
+    appendLog(false, '⚠ 显示层掉帧过多（设备性能不足），已切换兼容显示模式（识别分辨率与精度不变）');
+    applyFallbackDisplay(document.querySelector('#qr-reader video'));
+    startFallbackLoop();
+}
+function applyFallbackDisplay(video) {
+    if (!video) return;
+    video.style.opacity = '0.01';          // 保持可见参与解码，但不依赖 GPU 合成上屏
+    video.style.pointerEvents = 'none';
+}
+function getFallbackCanvas() {
+    // html5-qrcode stop() 会清空 #qr-reader：画布被移除时自动重建
+    if (!fallbackCanvas || !fallbackCanvas.isConnected) {
+        var host = document.getElementById('qr-reader');
+        if (!host) return null;
+        fallbackCanvas = document.createElement('canvas');
+        fallbackCanvas.id = 'fallbackDisplay';
+        host.insertBefore(fallbackCanvas, host.firstChild);   // 垫底：视频显示层，标注层（#scanOverlay z-index:5）在其上
+        fallbackCanvas.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:1;pointer-events:none;';
+        fallbackCtx = null;
+    }
+    return fallbackCanvas;
+}
+function startFallbackLoop() {
+    if (fallbackRaf) return;
+    fallbackTick = 0;
+    fallbackLoop();
+}
+function fallbackLoop() {
+    fallbackRaf = requestAnimationFrame(fallbackLoop);
+    if (!scanning || !camFallbackDisplay) { cancelAnimationFrame(fallbackRaf); fallbackRaf = 0; return; }
+    fallbackTick++;
+    if (fallbackTick % 2 !== 0) return;   // 30fps：足够流畅且省 CPU
+    var video = document.querySelector('#qr-reader video');
+    var canvas = getFallbackCanvas();
+    if (!video || !canvas || !video.videoWidth) return;
+    // 显示画布 ≤1280 宽（显示用；识别抓帧仍走 frameCanvas 原始/2000px，精度不变）
+    var s = Math.min(1, 1280 / video.videoWidth);
+    var w = Math.max(1, Math.round(video.videoWidth * s)), h = Math.max(1, Math.round(video.videoHeight * s));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    if (!fallbackCtx) fallbackCtx = canvas.getContext('2d');
+    fallbackCtx.drawImage(video, 0, 0, w, h);
+}
+function startScan(deviceId) {
+    if (scanning || camBusy) return;
+    userStopped = false;   // 手动/自动重新开启：恢复插拔设备自动重启
+    if (typeof Html5Qrcode === 'undefined') {
+        camFailNotify('扫码组件加载失败，请使用手动输入方式');
+        return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        camFailNotify('当前浏览器不支持摄像头调用，请改用 Chrome/Edge/Safari，或使用【图片识别】/手动输入');
+        return;
+    }
+    if (window.isSecureContext === false) {
+        camFailNotify('摄像头需 HTTPS 安全环境：请用 https://电脑IP:8443 访问，或使用【图片识别】/手动输入');
+        return;
+    }
+    camBusy = true;
+    html5QrCode = new Html5Qrcode('qr-reader');
+    var cfg = { fps: IS_RAISE ? 2 : 5 };   // 举牌模式：二维码解码器在画面中无码可解，降低其扫描频率省 CPU（图案识别走 multiTick）
+    if (!zxReady()) cfg.qrbox = { width: 250, height: 250 };   // 无多码组件时保持原单码取景框；有多码组件时整帧取景（画面中多个二维码同框）
+    // 按清晰度档位取流（默认高清 2K）：浏览器自动选最接近档位，启动即目标档位无需再升档
+    // 指定 deviceId（下拉/轮切切换）时用精确设备约束；未指定默认后置摄像头
+    var m = camTierMeta();
+    cfg.videoConstraints = deviceId
+        ? { deviceId: { exact: deviceId }, width: { ideal: m.w }, height: { ideal: m.h } }
+        : { facingMode: 'environment', width: { ideal: m.w }, height: { ideal: m.h } };
+    html5QrCode.start(
+        deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' },   // 传入 videoConstraints 时此参数被忽略（保留以满足必填校验）
+        cfg,
+        onScanSuccess,
+        function() {}
+    ).then(function() {
+        camBusy = false;
+        var video = document.querySelector('#qr-reader video');
+        var track = (video && video.srcObject) ? video.srcObject.getVideoTracks()[0] : null;
+        var st = track && track.getSettings ? track.getSettings() : null;
+        camCurId = (st && st.deviceId) || deviceId || camCurId;
+        refreshCamList();
+        startMultiTimer();
+        startOverlay();
+        startVideoWatchdog();
+        scanning = true;
+        document.getElementById('startBtn').style.display = 'none';
+        document.getElementById('stopBtn').style.display = 'inline-block';
+    }).catch(function(err) {
+        camBusy = false;
+        refreshCamList();
+        camFailNotify(cameraErrMsg(err));   // 日志 + 浮窗提醒 + 显示手动输入登记面板
+        if (!deviceId && err && err.name === 'OverconstrainedError') {
+            html5QrCode.start(
+                { facingMode: 'user' },
+                Object.assign({}, cfg, { videoConstraints: { facingMode: 'user', width: { ideal: m.w }, height: { ideal: m.h } } }),
+                onScanSuccess,
+                function() {}
+            ).then(function() {
+                camBusy = false;
+                var video2 = document.querySelector('#qr-reader video');
+                var track2 = (video2 && video2.srcObject) ? video2.srcObject.getVideoTracks()[0] : null;
+                var st2 = track2 && track2.getSettings ? track2.getSettings() : null;
+                camCurId = (st2 && st2.deviceId) || camCurId;
+                refreshCamList();
+                startMultiTimer();
+                startOverlay();
+                startVideoWatchdog();
+                scanning = true;
+                document.getElementById('startBtn').style.display = 'none';
+                document.getElementById('stopBtn').style.display = 'inline-block';
+            }).catch(function() {
+                camFailNotify('摄像头调用失败，请使用【图片识别】或手动输入方式登记');
+            });
+        }
+    });
+}
+
+// 摄像头启动失败/无设备的统一反馈：日志行 + 浮窗提醒 + 显示手动输入编号登记面板（兜底）
+function camFailNotify(msg) {
+    appendLog(false, msg);
+    if (typeof showToast === 'function') showToast('📷 ' + msg, 'error');
+    showManualPanel();
+}
+
+// 摄像头启动失败时显示「手动输入编号登记」面板（默认隐藏，节约页面空间）
+function showManualPanel() {
+    var p = document.getElementById('manualPanel');
+    if (p) p.style.display = '';
+}
+
+// 多码识别定时器：ZXing 整帧 + 重叠网格解码，每0.5秒一次（与 html5-qrcode 单码识别并存，登记去重）
+// 举牌模式：同一时钟驱动 6x6 图案识别（不走 ZXing）
+function startMultiTimer() {
+    // setTimeout 链：multiTick 处理完一帧才排下一次（自适应节流，低端机不堆帧）
+    if ((zxReady() || IS_RAISE) && !multiTimer) multiTimer = setTimeout(multiTick, 500);
+}
+
+function cameraErrMsg(err) {
+    var name = err && err.name ? err.name : '';
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        return '摄像头权限被拒绝：请在浏览器地址栏/系统设置中允许本页面使用摄像头，然后重新点击【开始扫码】';
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        return '未检测到摄像设备，请确认后重试';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+        return '摄像头被其他程序占用，请关闭后重试';
+    }
+    if (name === 'OverconstrainedError') {
+        return '后置摄像头不可用，正在尝试其他摄像头…';
+    }
+    return '摄像头启动失败（' + name + '），请使用【图片识别】或手动输入方式登记';
+}
+
+function fileRegister(input) {
+    var files = Array.prototype.slice.call(input.files || []);
+    input.value = '';
+    if (!files.length || leaving) return;
+    // 举牌模式：照片中的举牌卡识别（多张照片依次解析，汇总去重后一次性登记）
+    if (IS_RAISE) {
+        var raiseHits = [];
+        var raiseChain = Promise.resolve();
+        files.forEach(function (file) {
+            raiseChain = raiseChain.then(function () { return imageFileToCanvas(file, 1800); }).then(function (cv) {
+                var dets = raiseScanCanvas(cv);
+                dets.forEach(function (d) {
+                    for (var i = 0; i < raiseHits.length; i++) if (raiseHits[i].text === String(d.no)) return;
+                    raiseHits.push({ text: String(d.no), opt: d.opt });
+                });
+                if (!dets.length) appendLog(false, '✗ 「' + file.name + '」未识别到举牌卡');
+            }).catch(function () {
+                appendLog(false, '✗ 「' + file.name + '」图片读取失败');
+            });
+        });
+        raiseChain.then(function () {
+            if (!raiseHits.length) { appendLog(false, '照片中未识别到举牌卡，请拍摄清晰的照片'); return; }
+            registerCodes(raiseHits);
+        });
+        return;
+    }
+    if (!zxReady()) {
+        // 无多码组件：保留原单张照片单码识别兜底
+        if (typeof Html5Qrcode === 'undefined') { appendLog(false, '识别组件加载失败'); return; }
+        var scanner = new Html5Qrcode('qr-reader');
+        scanner.scanFile(files[0], true).then(function(text) {
+            scanner.clear();
+            registerCodes([text]);
+        }).catch(function() {
+            scanner.clear();
+            appendLog(false, '照片中未识别到二维码，请拍摄清晰的二维码照片');
+        });
+        return;
+    }
+    // 多码识别：多张照片依次解析，汇总全部二维码一次性登记（答题模式保留定位点用于朝向识别）
+    var allCodes = [];
+    function pushCode(c) {
+        if (!c || !c.text) return;
+        for (var i = 0; i < allCodes.length; i++) if (allCodes[i].text === c.text) return;
+        allCodes.push(IS_QUIZ ? { text: c.text, pts: c.pts || null } : c.text);
+    }
+    var chain = Promise.resolve();
+    files.forEach(function (file) {
+        chain = chain.then(function () { return zxScanImageFile(file); }).then(function (codes) {
+            codes.forEach(pushCode);
+            if (!codes.length) appendLog(false, '✗ 「' + file.name + '」未识别到二维码');
+        }).catch(function () {
+            appendLog(false, '✗ 「' + file.name + '」图片读取失败');
+        });
+    });
+    chain.then(function () {
+        if (!allCodes.length) { appendLog(false, '照片中未识别到二维码，请拍摄清晰的二维码照片'); return; }
+        registerCodes(allCodes);
+    });
+}
+
+function stopScan() {
+    userStopped = true;   // 用户主动停止：插拔设备的自动重启不再触发（点【开始扫码】可重开）
+    stopOverlay();
+    evalPause = false;   // 停止扫码：退出弹窗评价暂停 / 多码点选状态
+    packFlush(true);   // 把不足一秒的识别结果立即发出（已识别到的应登记完整）
+    pendingRegs = []; pendingRegKeys = {};   // 丢弃未提交的积压码
+    lastSentOpt = {};   // 清空已提交选项记录：下次开始扫码时全量重发对齐一次（防登记在别处被撤销后漏登记；看门狗自动重启会先备份恢复，不受此影响）
+    markSend = {};   // 标注着色状态一并清空（重开后每帧识别会重新写入）
+    if (multiTimer) { clearTimeout(multiTimer); multiTimer = null; }
+    if (html5QrCode && scanning) {
+        html5QrCode.stop().then(function() {
+            scanning = false;
+            document.getElementById('startBtn').style.display = 'inline-block';
+            document.getElementById('stopBtn').style.display = 'none';
+        }).catch(function() {});
+    }
+}
+
+function onScanSuccess(decodedText) {
+    registerCodes([decodedText]);
+}
+
+// ===== 画面方向（手动旋转）：默认按原始方向识别（屏幕上=识别上的），不再随设备姿态自动偏转 =====
+// UP_DIR：屏幕哪条边是识别的「上」：0=上边（默认） 1=右边（顺时针90°） 2=下边（180°） 3=左边（逆时针90°）
+// 手机横拿/倒拿固定放置等场景点【⟳ 旋转】按钮每次转 90°，画面 △（drawUpArrow）恒指当前识别的「上」
+var UP_DIR = 0;
+function rotUpDir() {
+    UP_DIR = (UP_DIR + 1) % 4;
+    var names = ['上（默认）', '右（顺时针90°）', '下（180°）', '左（逆时针90°）'];
+    appendLog(true, '⟳ 识别方向已旋转：当前「上」=屏幕' + names[UP_DIR] + '（画面 △ 指示）');
+    if (typeof showToast === 'function') showToast('⟳ 识别方向已旋转，当前上方=' + names[UP_DIR]);
+}
+// 帧坐标（旋转对齐后的抓帧）→ 缩放视频坐标（未旋转 W×H 系）——用于把蓝/绿框与名字标注画回原始画面
+function framePtToVideo(p, vw, vh) {
+    if (UP_DIR === 1) return { x: vw - p.y, y: p.x };
+    if (UP_DIR === 3) return { x: p.y, y: vh - p.x };
+    if (UP_DIR === 2) return { x: vw - p.x, y: vh - p.y };
+    return { x: p.x, y: p.y };
+}
+
+// ===== ZXing 多码识别（摄像头整帧 / 照片通用） =====
+var zxReader = null;
+var zxHints = null;
+var multiTimer = null, mtGap = 500;   // mtGap=识别帧间隔（multiTick 自适应节流值），名字标注新鲜度窗口用
+var frameCanvas = null, frameCtx = null, tileCanvas = null, tileCtx = null;
+
+function zxReady() {
+    if (typeof ZXing === 'undefined') return false;
+    if (!zxReader) {
+        try {
+            zxReader = new ZXing.MultiFormatReader();
+            zxHints = new Map();
+            zxHints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+            zxHints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.QR_CODE]);
+            zxReader.setHints(zxHints);
+        } catch (e) { zxReader = null; return false; }
+    }
+    return true;
+}
+
+// 单画布解码（成功返回 {text, pts}，pts=定位点坐标（该画布坐标系）；失败返回 null）
+function zxDecodeCanvas(canvas) {
+    try {
+        var source = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+        var bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(source));
+        var res = zxReader.decode(bitmap, zxHints);
+        if (!res) return null;
+        var pts = [];
+        var rp = res.getResultPoints ? res.getResultPoints() : null;
+        if (rp) for (var i = 0; i < rp.length; i++) {
+            var p = rp[i];
+            if (!p) continue;
+            pts.push({ x: p.getX ? p.getX() : p.x, y: p.getY ? p.getY() : p.y });
+        }
+        return { text: res.getText(), pts: pts };
+    } catch (e) { return null; }
+}
+
+// N×N 重叠网格分块解码（相邻块约60%重叠，跨块二维码不漏识）
+function zxGridDecode(canvas, gridN, add) {
+    var W = canvas.width, H = canvas.height;
+    var tw = Math.min(W, Math.ceil(W * 1.6 / gridN));
+    var th = Math.min(H, Math.ceil(H * 1.6 / gridN));
+    if (tw < 24 || th < 24) return;
+    if (!tileCanvas) {
+        tileCanvas = document.createElement('canvas');
+        tileCtx = tileCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    tileCanvas.width = tw; tileCanvas.height = th;
+    for (var gy = 0; gy < gridN; gy++) {
+        for (var gx = 0; gx < gridN; gx++) {
+            var sx = gridN > 1 ? Math.round(gx * (W - tw) / (gridN - 1)) : 0;
+            var sy = gridN > 1 ? Math.round(gy * (H - th) / (gridN - 1)) : 0;
+            tileCtx.drawImage(canvas, sx, sy, tw, th, 0, 0, tw, th);
+            var t = zxDecodeCanvas(tileCanvas);
+            if (t) {
+                // 分块解码的定位点加上块偏移，换算回整帧坐标
+                for (var i = 0; i < t.pts.length; i++) { t.pts[i].x += sx; t.pts[i].y += sy; }
+                add(t);
+            }
+        }
+    }
+}
+
+// 画布多码识别：整帧迭代解码（负空间法）——ZXing 每次只返回画面中"最先找到"的一个码，多码同屏时
+// 整帧/网格反复解出同一个最强码，其余码永远解不出；改为每解出一个码就把其定位区涂白破坏该码，
+// 下一轮解码被迫找出其余的码，循环到无新码为止。涂白直接作用在画布上，后续网格分块（grids）也
+// 基于涂白图，只会解出新码，与迭代协同兜底。返回去重后的 [{text, pts}]（pts 为该画布坐标）
+function zxScanCanvas(canvas, grids) {
+    var found = [];
+    function add(t) {
+        if (!t || !t.text) return;
+        for (var i = 0; i < found.length; i++) if (found[i].text === t.text) return;
+        found.push({ text: t.text, pts: t.pts || [] });
+    }
+    var mctx = canvas.getContext('2d', { willReadFrequently: true });
+    for (var round = 0; round < 10; round++) {
+        var r = zxDecodeCanvas(canvas);
+        if (!r) break;
+        var before = found.length;
+        add(r);
+        if (found.length === before) break;   // 解出已见过的码：涂白失效（码间过近等），继续迭代无意义
+        if (!r.pts || r.pts.length < 2) break;   // 无定位点无法涂白
+        var mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity;
+        r.pts.forEach(function (p) {
+            if (p.x < mnx) mnx = p.x;
+            if (p.x > mxx) mxx = p.x;
+            if (p.y < mny) mny = p.y;
+            if (p.y > mxy) mxy = p.y;
+        });
+        var pad = Math.max(mxx - mnx, mxy - mny) * 0.25;   // 外扩 25%：盖住 finder 区又不误涂相邻码（码间距通常 ≥0.5 码宽）
+        mctx.fillStyle = '#ffffff';
+        mctx.fillRect(mnx - pad, mny - pad, (mxx - mnx) + pad * 2, (mxy - mny) + pad * 2);
+    }
+    (grids || []).forEach(function (n) { zxGridDecode(canvas, n, add); });
+    return found;
+}
+
+// 照片文件 → 缩放画布 → 多码识别
+function zxScanImageFile(file) {
+    return imageFileToCanvas(file, 1800).then(function (canvas) {
+        return zxScanCanvas(canvas, [2, 3]);
+    });
+}
+
+// 摄像头多码定时：抓取当前视频帧（≤800px 宽）解码，画面中的全部新码一次性登记
+// 举牌模式：识别画面中的全部 6x6 图案卡（编号+案边朝向），坐标换算同二维码流程共用提示层
+function multiTick() {
+    if (!multiTimer) return;   // 已停止（stopScan / 切换摄像头清句柄）
+    var t0 = Date.now();
+    try { multiTickCore(); } catch (e) {}
+    // 自适应节流：处理完才排下一次，间隔=上帧耗时+300ms 缓冲（弱机满屏图案单帧 1-3 秒时不再翻倍放大，
+    // 识别节奏稳定；抓帧分辨率不变）。mtGap 同步供名字标注新鲜度窗口自适应
+    var dur = Date.now() - t0;
+    mtGap = Math.max(500, dur + 300);
+    multiTimer = setTimeout(multiTick, mtGap);
+}
+function multiTickCore() {
+    if (!scanning || leaving) return;   // evalPause 仅暂缓提交（registerCodes 入队），扫描照常进行：蓝框常驻、识别不"卡住"
+    if (!IS_RAISE && !zxReady()) return;
+    var video = document.querySelector('#qr-reader video');
+    if (!video || video.readyState < 2 || !video.videoWidth) return;
+    var T = camTierMeta();   // 抓帧解码宽度随清晰度档位联动：档位越高识别距离越远（解码开销也越大）
+    var maxSide = IS_RAISE ? T.raise : T.qr;   // 举牌模式保留更高分辨率（远距离图案每格仅几个像素，缩得越小越读不出）
+    var scale = Math.min(1, maxSide / video.videoWidth);
+    var W = Math.round(video.videoWidth * scale), H = Math.round(video.videoHeight * scale);
+    if (!frameCanvas) {
+        frameCanvas = document.createElement('canvas');
+        frameCtx = frameCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    // 仅尺寸变化才重设：每帧都设置 width 会整帧重新分配十几 MB 内存，低端机吃不消
+    // 方向对齐（手动旋转）：按 UP_DIR 档位把抓帧转正，使「识别上」=用户指定方向（举牌案边朝向/答题 A-D 判边随之恒定）
+    // 四档变换（x'=a·x+c·y+e, y'=b·x+d·y+f）：1=逆时针90°(x'=y,y'=W-x) 3=顺时针90°(x'=H-y,y'=x) 2=180°
+    var rot = UP_DIR % 4;
+    var fw = (rot === 1 || rot === 3) ? H : W, fh = (rot === 1 || rot === 3) ? W : H;
+    if (frameCanvas.width !== fw || frameCanvas.height !== fh) {
+        frameCanvas.width = fw; frameCanvas.height = fh;
+    }
+    frameCtx.setTransform(1, 0, 0, 1, 0, 0);
+    if (rot === 1) frameCtx.setTransform(0, -1, 1, 0, 0, W);
+    else if (rot === 3) frameCtx.setTransform(0, 1, -1, 0, H, 0);
+    else if (rot === 2) frameCtx.setTransform(-1, 0, 0, -1, W, H);
+    frameCtx.drawImage(video, 0, 0, W, H);
+    frameCtx.setTransform(1, 0, 0, 1, 0, 0);
+    var now = Date.now();
+    if (IS_RAISE) {
+        // 举牌识别：蓝框=识别到图案卡；登记走编号码流程（opt 由案边朝向得出，抓帧已转正=按物理方向判定）
+        var hits2 = raiseScanCanvas(frameCanvas);
+        hits2.forEach(function (d) {
+            var rp = d.pts.map(function (p) { p = framePtToVideo(p, W, H); return { x: p.x / scale, y: p.y / scale }; });
+            d.pts = rp;
+            d.text = String(d.no);
+            ptsCache[d.text] = { pts: rp, ts: now };
+            hitFrames.push({ pts: rp, until: now + 1000 });   // 蓝色细框：识别到、登记提交中（每帧刷新常驻，响应后转绿框）
+            if (repeatUntil[d.text] && now < repeatUntil[d.text]) repeatFrames.push({ pts: rp, until: now + 700 });
+        });
+        flushPendingFlash();
+        registerCodes(hits2);
+        return;
+    }
+    var hits = zxScanCanvas(frameCanvas, [2]);
+    // 坐标换算回摄像头原始分辨率（帧已按 UP_DIR 旋转，先逆映射回未旋转系）：蓝色细框 + 定位缓存（✓/绿框提示用）
+    hits.forEach(function (h) {
+        if (!h.pts || !h.pts.length) return;
+        var rp = h.pts.map(function (p) { p = framePtToVideo(p, W, H); return { x: p.x / scale, y: p.y / scale }; });
+        h.pts = rp;
+        ptsCache[h.text] = { pts: rp, ts: now };
+        hitFrames.push({ pts: rp, until: now + 1000 });                       // 蓝色细框：识别到二维码（提交中，每帧刷新，响应后转绿框/名单）
+        if (repeatUntil[h.text] && now < repeatUntil[h.text]) {              // 已登记过的码：绿框持续刷新
+            repeatFrames.push({ pts: rp, until: now + 700 });
+        }
+    });
+    flushPendingFlash();
+    registerCodes(hits);
+}
+
+// 批量登记：识别到的全部编号一次登记（单个码保持原流程；多个码全部完成后非连续模式才跳转）
+// 码条目可为字符串或 {text, pts, opt}（pts=摄像头原始分辨率下的定位点用于 ✓/边框提示；opt=举牌识别出的选项）
+// evalPause 期间的新码暂存：同码重复识别只更新朝向/位置；解除暂停后由 flushPendingRegs 统一提交
+function queuePendingRegs(fresh) {
+    var added = 0;
+    fresh.forEach(function (it) {
+        if (pendingRegKeys[it.code]) {
+            pendingRegs.forEach(function (p) { if (p.code === it.code) { p.pts = it.pts; p.opt = it.opt; } });
+            return;
+        }
+        pendingRegKeys[it.code] = 1;
+        pendingRegs.push({ code: it.code, pts: it.pts, opt: it.opt });
+        added++;
+    });
+    if (pendingRegs.length > 60) pendingRegs = pendingRegs.slice(-60);
+    if (added) appendLog(true, '… 识别到 ' + added + ' 个新码，当前登记完成后自动提交');
+}
+function flushPendingRegs() {
+    if (evalPause || !pendingRegs.length || leaving) return;
+    var f = pendingRegs;
+    pendingRegs = []; pendingRegKeys = {};
+    registerCodes(f);
+}
+
+// ===== 答题/举牌：识别结果每秒打包发送一次（不等上一批响应） =====
+// 原流程：批量响应回来才提交积压码，弱网时检测被迫等待、感知滞后；改为攒包定秒发送+允许并发，
+// 检测与发送彻底解耦；服务端登记幂等（already=true）防重复，超时未登记的码会被再次识别重新提交
+var sendQueue = [], sendQueueKeys = {}, lastPackAt = 0;
+var lastSentOpt = {};   // code → 上次实际提交到服务端的选项（opt）：用于跳过"位置变了但选项没变"的重复提交，减包省资源
+var markSend = {};   // code → 1=本帧识别触发了发包（标注蓝字） 0=选项与已提交相同未发包（标注常规色）；每帧识别覆盖写入
+function queueForSend(fresh) {
+    fresh.forEach(function (it) {
+        var curOpt = IS_QUIZ ? quizOptionFromPts(it.pts) : (IS_RAISE ? (it.opt || '') : '');
+        var prev = lastSentOpt[it.code];
+        var willSend = !(prev !== undefined && prev === curOpt);
+        markSend[it.code] = willSend ? 1 : 0;   // 标注着色跟随：发包=蓝字（提交中/刚提交），未发包=白字
+        // 选项已发给服务端且本次未变：不再入队（省网络与手机资源；学生改选项时 prev !== curOpt 自然重发，服务端 UPDATE 最新答案）
+        if (!willSend) return;
+        if (sendQueueKeys[it.code]) {
+            sendQueue.forEach(function (p) { if (p.code === it.code) { p.pts = it.pts; p.opt = it.opt; } });   // 同码：只更新最新位置/朝向
+            return;
+        }
+        sendQueueKeys[it.code] = 1;
+        sendQueue.push({ code: it.code, pts: it.pts, opt: it.opt });
+    });
+    if (sendQueue.length > 120) {   // 防膨胀：超限丢最早的（下次识别会重新入队）
+        var drop = sendQueue.splice(0, sendQueue.length - 120);
+        drop.forEach(function (p) { delete sendQueueKeys[p.code]; });
+    }
+}
+function packFlush(force) {
+    if (!sendQueue.length || leaving) return;
+    var now = Date.now();
+    if (!force && now - lastPackAt < 900) return;   // 打包节流：每秒最多发送一次
+    lastPackAt = now;
+    var batch = sendQueue;
+    sendQueue = []; sendQueueKeys = {};
+    // 双重去重：入队后选项又未变的码这里再滤一次；meta[i] 与 items[i] 一一对应（响应按 items 序返回）
+    var items = [], meta = [];
+    batch.forEach(function (f) {
+        var opt = IS_QUIZ ? quizOptionFromPts(f.pts) : (IS_RAISE ? (f.opt || '') : '');
+        if (lastSentOpt[f.code] === opt) return;
+        items.push({ code: f.code, opt: opt });
+        meta.push({ f: f, opt: opt });
+    });
+    if (!items.length) return;   // 本秒全部与已提交选项相同：空包都不发（稳定状态零上行，省流量省电）
+    // 弱网下请求可能长时间挂起：5 秒超时主动中断（未登记的码会被重新识别提交，服务端幂等不重复）
+    var ctrl = ('AbortController' in window) ? new AbortController() : null;
+    var abortTo = ctrl ? setTimeout(function () { ctrl.abort(); }, 5000) : null;
+    fetch('api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal: ctrl ? ctrl.signal : undefined,
+        body: 'type=scan_register_multi&project_id=' + projectId
+            + (CUR_ROUND ? '&round=' + CUR_ROUND : '')
+            + (HIST_DATE ? '&date=' + HIST_DATE : '')
+            + '&codes=' + encodeURIComponent(JSON.stringify(items))
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+        if (abortTo) clearTimeout(abortTo);
+        var okIds = [];
+        if (!d.success) {
+            appendLog(false, '✗ 批量登记失败：' + (d.message || ''));
+            batch.forEach(function (it) { showFailMark(it.code, it.pts); });
+            // 整体失败不记 lastSentOpt：这些码会被重新识别入队，下一秒自动重发
+        } else {
+            okSoundMute = true;   // 逐条渲染期间静音提示音，整批只播一声
+            (d.results || []).forEach(function (res, i) {
+                var m = meta[i];
+                if (!m || !res) return;
+                lastSentOpt[m.f.code] = m.opt;   // 服务端已收到该码本次选项：之后选项不变就不再重发（改答案会自然重发）
+                var quizOpt = IS_QUIZ ? quizOptionFromPts(m.f.pts) : (IS_RAISE ? (m.f.opt || '') : '');
+                applyRegisterResult(m.f.code, res, { batch: true, pts: m.f.pts, opt: m.f.opt, keepPause: true, skipBatchEval: true }, quizOpt);
+                if (res.success && !res.already && res.student) okIds.push(res.student.id);
+            });
+            okSoundMute = false;
+            if ((d.results || []).length !== items.length) {
+                appendLog(false, '✗ 有 ' + (items.length - (d.results || []).length) + ' 个码未返回登记结果');
+            }
+            if (d.quiz) updateQuizHud(d.quiz);   // 全班统计：一次渲染
+        }
+        // 批量评价：新登记学生合并为一次请求设置相同评价
+        if (okIds.length && swOn('swBatchEval') && batchEvalValue !== '') {
+            fetch('api.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'type=batch_evaluate&project_id=' + projectId + '&student_ids=' + okIds.join(',') + '&value=' + encodeURIComponent(batchEvalValue)
+            + (CUR_ROUND ? '&round=' + CUR_ROUND : '')   // 题次项目评价必须随轮：否则服务端回落最后一轮，切回当前轮看不到评价
+            }).catch(function () { appendLog(false, '✗ 批量评价请求网络错误'); });
+        }
+        if (okIds.length) playOkSound();   // 一批只播一声提示音
+    })
+    .catch(function () {
+        if (abortTo) clearTimeout(abortTo);
+        appendLog(false, '✗ 打包登记网络错误或超时（未登记的码会自动重新识别提交，服务端幂等不重复）');
+        // 网络失败不记 lastSentOpt：码仍在画面时下帧重新入队、下一秒自动重发
+    });
+}
+
+function registerCodes(codes) {
+    if (leaving) return;   // 即将跳转：不处理任何码
+    var fresh = [];
+    codes.forEach(function (item) {
+        var code = typeof item === 'string' ? item : (item && item.text);
+        if (!code || !shouldProcess(code)) return;
+        fresh.push({
+            code: code,
+            pts: (item && typeof item === 'object') ? (item.pts || null) : null,
+            opt: (item && typeof item === 'object') ? (item.opt || '') : ''
+        });
+    });
+    if (!fresh.length) return;
+    // 弹窗评价 + 多码：不自动登记，进入画面静止点选模式（点选其一弹窗评价）
+    var allWithPts = fresh.every(function (f) { return f.pts && f.pts.length; });
+    if (swOn('swRegEval') && fresh.length > 1 && allWithPts) { enterMultiSelect(fresh); return; }
+    // 登记请求进行中/评价中：不停止扫描，新码入待提交队列（蓝框持续刷新），解除后自动提交
+    if (evalPause) { queuePendingRegs(fresh); return; }
+    // 答题/举牌：识别结果进发送队列，每秒打包一次提交（不等上一批响应，检测与发送解耦；服务端幂等防重）
+    if (IS_ABCD) { queueForSend(fresh); packFlush(); return; }
+    if (fresh.length === 1) { doRegister(fresh[0].code, { pts: fresh[0].pts, opt: fresh[0].opt }); return; }
+    appendLog(true, '本次识别到 ' + fresh.length + ' 个' + (IS_RAISE ? '举牌卡' : '二维码') + '，一次登记…');
+    // 批量优化：一次请求完成全部登记（原逐码 N 请求会排队卡顿）；提交期间扫描照常进行（新码进队列），画面/识别不中断
+    evalPause = true;
+    okSoundMute = true;
+    var items = fresh.map(function (f) {
+        return {
+            code: f.code,
+            opt: IS_QUIZ ? quizOptionFromPts(f.pts) : (IS_RAISE ? (f.opt || '') : '')
+        };
+    });
+    // 弱网下请求可能长时间挂起：5 秒超时主动中断并恢复识别（未登记的码会被重新识别提交，服务端登记幂等不重复）
+    var ctrl = ('AbortController' in window) ? new AbortController() : null;
+    var abortTo = ctrl ? setTimeout(function () { ctrl.abort(); }, 5000) : null;
+    fetch('api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal: ctrl ? ctrl.signal : undefined,
+        body: 'type=scan_register_multi&project_id=' + projectId
+            + (CUR_ROUND ? '&round=' + CUR_ROUND : '')
+            + (HIST_DATE ? '&date=' + HIST_DATE : '')
+            + '&codes=' + encodeURIComponent(JSON.stringify(items))
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+        if (abortTo) clearTimeout(abortTo);
+        okSoundMute = false;
+        var okIds = [];
+        if (!d.success) {
+            appendLog(false, '✗ 批量登记失败：' + (d.message || ''));
+            fresh.forEach(function (it) { showFailMark(it.code, it.pts); });
+        } else {
+            (d.results || []).forEach(function (res, i) {
+                var it = fresh[i];
+                if (!it || !res) return;
+                var quizOpt = IS_QUIZ ? quizOptionFromPts(it.pts) : (IS_RAISE ? (it.opt || '') : '');
+                applyRegisterResult(it.code, res, { batch: true, pts: it.pts, opt: it.opt, keepPause: true, skipBatchEval: true }, quizOpt);
+                if (res.success && !res.already && res.student) okIds.push(res.student.id);
+            });
+            if ((d.results || []).length !== fresh.length) {
+                appendLog(false, '✗ 有 ' + (fresh.length - (d.results || []).length) + ' 个码未返回登记结果');
+            }
+            if (d.quiz) updateQuizHud(d.quiz);   // 全班统计：一次渲染
+        }
+        evalPause = false;   // 批量完成：恢复提交
+        // 即将跳转（非答题/举牌 + 非连续扫码）则无需提交积压码；否则立即提交请求期间识别到的积压新码
+        if (IS_ABCD || swOn('swContinuous')) flushPendingRegs();
+        // 批量评价：新登记学生合并为一次请求设置相同评价
+        if (okIds.length && swOn('swBatchEval') && batchEvalValue !== '') {
+            fetch('api.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'type=batch_evaluate&project_id=' + projectId + '&student_ids=' + okIds.join(',') + '&value=' + encodeURIComponent(batchEvalValue)
+            + (CUR_ROUND ? '&round=' + CUR_ROUND : '')   // 题次项目评价必须随轮：否则服务端回落最后一轮，切回当前轮看不到评价
+            }).catch(function () { appendLog(false, '✗ 批量评价请求网络错误'); });
+        }
+        if (okIds.length) playOkSound();   // 一批只播一声提示音
+        // 答题/举牌模式：始终停留在扫码页连续识别；普通模式非连续扫码则跳转（与逐码登记行为一致）
+        if (!IS_ABCD && !swOn('swContinuous')) gotoProjectView();
+    })
+    .catch(function () {
+        if (abortTo) clearTimeout(abortTo);
+        okSoundMute = false;
+        evalPause = false;
+        flushPendingRegs();
+        appendLog(false, '✗ 批量登记网络错误或超时（未登记的码会自动重新识别提交）');
+    });
+}
+
+function manualRegister() {
+    var code = document.getElementById('manualNo').value.trim();
+    if (!code) { showToast(IS_RAISE ? '请输入学生序号' : '请输入编号', 'error'); return; }
+    document.getElementById('manualNo').value = '';
+    scanHistory[code] = Date.now(); // 手动输入不走粘性去重
+    doRegister(code);
+}
+
+// ===== 登记主流程 =====
+// opts.batch=true：多码批量登记中的一员（不弹评价窗、不单独跳转）；opts.done()：该码登记流程结束回调（供批量计数）
+// opts.keepPause=true：批量渲染期间不让单项回调恢复识别（由批量回调统一 evalPause=false）
+// opts.skipBatchEval=true：批量渲染期间跳过逐生「批量评价」请求（由批量回调合并为一次请求）
+function doRegister(code, opts) {
+    opts = opts || {};
+    var batch = !!opts.batch;
+    var willPopup = swOn('swRegEval') && !batch; // 成功后将弹窗评价（需保持暂停识别）
+    if (leaving && !batch) return; // 即将跳转，忽略后续扫码
+    // 答题/举牌模式：携带识别出的选项（A/B/C/D），重复识别即更新最新答案
+    // 答题=按二维码定位点朝向判边；举牌=识别器按图案卡哪条边朝上直接给出选项
+    var quizOpt = IS_QUIZ ? quizOptionFromPts(opts.pts) : (IS_RAISE ? (opts.opt || '') : '');
+    fetch('api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'type=scan_register&project_id=' + projectId + '&code=' + encodeURIComponent(code)
+            + (CUR_ROUND ? '&round=' + CUR_ROUND : '')
+            + (HIST_DATE ? '&date=' + HIST_DATE : '')
+            + (quizOpt ? '&opt=' + quizOpt : '')
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        applyRegisterResult(code, data, opts, quizOpt);
+    })
+    .catch(function() {
+        appendLog(false, '✗ 网络错误');
+        if (evalPause && !willPopup && !opts.keepPause) { evalPause = false; flushPendingRegs(); }
+        if (opts.done) opts.done();
+    });
+}
+
+// 登记响应处理（单码 doRegister 与多码批量 scan_register_multi 共用同一套渲染逻辑）
+function applyRegisterResult(code, data, opts, quizOpt) {
+    var batch = !!opts.batch;
+    var willPopup = swOn('swRegEval') && !batch; // 成功后将弹窗评价（需保持暂停识别）
+    if (!data.success) {
+        appendLog(false, '✗ ' + (data.message || '登记失败'));
+        if (!swOn('swSpeedy')) showFailMark(code, opts.pts);   // 红框 + 红?（如：非本班学生的码）；⚡ 极速：不显示任何标注
+        if (evalPause && !willPopup && !opts.keepPause) { evalPause = false; flushPendingRegs(); }   // 不弹窗：恢复识别
+        if (opts.done) opts.done();
+        return;
+    }
+    var name = data.student.name + '（座号 ' + data.student.seat_no + '，编号 ' + data.student.student_no + '）';
+
+    if (IS_ABCD) {
+        // 答题/举牌模式：允许重复识别，每次都按最新朝向更新答案（登记一次，其后仅改选项）
+        var opt = data.eval_value || quizOpt || '？';
+        // ✓ 改为「序号 姓名 选项」持续标注：每个码各自显示、随码移动，码移出画面才消失
+        setNameMark(code, data.student, opts.pts, opt === '？' ? '' : opt);
+        if (!data.already) {
+            scanCount++;
+            document.getElementById('scanCount').textContent = scanCount;
+            playOkSound();
+        }
+        showRepeatMark(code, opts.pts);    // 绿框持续刷新（已识别过的码）
+        appendLog(true, (data.already ? '↻ ' : '✓ ') + data.student.name + ' 已选 ' + opt
+            + (quizOpt ? '' : '（未识别到选项朝向，未记录选项）'));
+        if (data.quiz) updateQuizHud(data.quiz);
+        if (opts.done) opts.done();
+        return;
+    }
+
+    var swRegEval = swOn('swRegEval');
+    var swBatchEval = swOn('swBatchEval');
+    var continuous = swOn('swContinuous');
+
+    if (data.already) {
+        // 同一码重复识别：绿框标注 + 学生信息标注照常显示
+        setNameMark(code, data.student, opts.pts, data.eval_value || '');
+        showRepeatMark(code, opts.pts);
+        if (swRegEval && !batch) {
+            // 开了弹窗评价（单码）：无论有无评价都弹窗（无=补充、有=改写，以最新一次为准）
+            appendLog(true, '… ' + name + ' 已登记过，请在弹窗中' + ((data.eval_value || '') ? '修改' : '补充') + '评价');
+            evalPause = true;
+            if (!continuous) evalRedirect = true;
+            openEvalDialog('single', '评价', name, data.student.id);
+        } else if (swBatchEval && batchEvalValue !== '') {
+            // 开了批量评价且已设置内容：二次扫码直接覆盖更新为已设置的评价（不弹窗；批量回调中的多条各自更新，提示音由批量静音机制合并）
+            var evalText = EVAL_OPTIONS && EVAL_OPTIONS[batchEvalValue] ? EVAL_OPTIONS[batchEvalValue] : batchEvalValue;
+            appendLog(true, '… ' + name + ' 已登记过，评价更新为：' + evalText);
+            fetch('api.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'type=batch_evaluate&project_id=' + projectId + '&student_ids=' + data.student.id + '&value=' + encodeURIComponent(batchEvalValue)
+                    + (CUR_ROUND ? '&round=' + CUR_ROUND : '')   // 题次项目评价随轮
+                    + (HIST_DATE ? '&date=' + HIST_DATE : '')
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.success) {
+                    playOkSound();
+                    if (nameMarks[code]) nameMarks[code].opt = evalText;   // 标注评价内容同步
+                }
+                else appendLog(false, '✗ ' + name + ' 评价更新失败：' + (d.message || ''));
+            })
+            .catch(function () { appendLog(false, '✗ ' + name + ' 评价更新网络错误'); });
+            if (evalPause && !willPopup && !opts.keepPause) { evalPause = false; flushPendingRegs(); }
+        } else {
+            appendLog(true, '… ' + name + ' 已登记过（重复扫码忽略）');
+            if (evalPause && !willPopup && !opts.keepPause) { evalPause = false; flushPendingRegs(); }
+        }
+        if (opts.done) opts.done();
+        return;
+    }
+
+    scanCount++;
+    document.getElementById('scanCount').textContent = scanCount;
+    playOkSound();
+    showOkMark(code, opts.pts);   // 码面中央绿色✓
+    setNameMark(code, data.student, opts.pts, data.eval_value || '');   // 学生标注（座号+姓名+评价内容；码在画面即持续显示）
+
+    if (swBatchEval && batchEvalValue !== '' && !opts.skipBatchEval) {
+        // 批量评价：登记后直接设置相同评价（不弹窗）
+        fetch('api.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'type=batch_evaluate&project_id=' + projectId + '&student_ids=' + data.student.id + '&value=' + encodeURIComponent(batchEvalValue)
+                + (CUR_ROUND ? '&round=' + CUR_ROUND : '')   // 题次项目评价随轮
+                + (HIST_DATE ? '&date=' + HIST_DATE : '')   // 历史补登场景：评价写到指定日期而非今天
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.success) {
+                appendLog(true, '✓ ' + name + ' 登记成功，评价：' + batchEvalValue);
+                var ot = EVAL_OPTIONS && EVAL_OPTIONS[batchEvalValue] ? EVAL_OPTIONS[batchEvalValue] : batchEvalValue;   // 标注评价内容同步
+                Object.keys(nameMarks).forEach(function (c) {
+                    if (nameMarks[c].sid === data.student.id) nameMarks[c].opt = ot;
+                });
+            }
+            else appendLog(false, '✗ ' + name + ' 已登记，但评价失败：' + (d.message || ''));
+            if (!continuous && !batch) gotoProjectView(); else if (opts.done) opts.done();
+        })
+        .catch(function () {
+            appendLog(false, '✗ ' + name + ' 已登记，但评价请求网络错误');
+            if (!continuous && !batch) gotoProjectView(); else if (opts.done) opts.done();
+        });
+        return;
+    }
+
+    if (swRegEval) {
+        if (batch) {
+            // 兜底：批量流程不弹窗（多码+弹窗评价已在点选模式处理）
+            appendLog(true, '✓ ' + name + ' 登记成功（批量登记不弹窗，可稍后在项目页补充评价）');
+            if (evalPause && !willPopup && !opts.keepPause) { evalPause = false; flushPendingRegs(); }
+            if (opts.done) opts.done();
+            return;
+        }
+        // 弹窗评价：登记成功即弹窗；评价完成（弹窗关闭）前暂停识别，不处理/不记录后续码
+        appendLog(true, '✓ ' + name + ' 登记成功，请在弹窗中评价（评价完成前暂停识别）');
+        evalPause = true;
+        if (!continuous) evalRedirect = true;
+        openEvalDialog('single', '评价', name, data.student.id);
+        if (opts.done) opts.done();
+        return;
+    }
+
+    var evalText = data.eval_value ? '，已有评价：' + data.eval_value : '';
+    appendLog(true, '✓ ' + name + ' 登记成功' + evalText);
+    if (!continuous && !batch) gotoProjectView(); else if (opts.done) opts.done();
+}
+
+function appendLog(ok, text) {
+    var log = document.getElementById('scanLog');
+    if (log.querySelector('p')) log.innerHTML = '';
+    var div = document.createElement('div');
+    div.className = 'log-item ' + (ok ? 'ok' : 'fail');
+    var time = new Date().toTimeString().slice(0, 8);
+    div.textContent = '[' + time + '] ' + text;
+    log.insertBefore(div, log.firstChild);
+}
+
+var okAudioCtx = null;    // 复用音频上下文：每个提示音都 new AudioContext 极耗资源，N 码同识时是页面卡顿主源之一
+var okSoundMute = false;  // 批量登记渲染期间静音，完成后统一播一声
+function playOkSound() {
+    if (okSoundMute) return;
+    try {
+        if (!okAudioCtx) okAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (okAudioCtx.state === 'suspended' && okAudioCtx.resume) okAudioCtx.resume();
+        var ctx = okAudioCtx;
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 1200;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);
+    } catch (e) {}
+}
+</script>
+<!-- 教师在线心跳 + 反向喊话反馈浮窗：打开本页（扫码）也算教师在线；收到学生回复右上浮窗 3 秒自动消失（class_id 由 bootScanPage 从项目数据取） -->
+<script src="assets/rev_notify.js?v=1"></script>
+<script>
+// 项目加载早于本脚本时由 bootScanPage 直接调用；否则此处兜底补挂（二者互斥，不会重复注册）
+if (window.__revPending) { revNotify(window.__revPending.cid, 'toast', { project_id: window.__revPending.pid }); window.__revPending = null; }
+</script>
+</div>
+<style>
+.help-fab { position: fixed; top: 70px; right: 16px; z-index: 1100; width: 38px; height: 38px;
+    border-radius: 50%; border: none; background: #667eea; color: #fff; font-size: 20px; font-weight: bold;
+    cursor: pointer; box-shadow: 0 2px 10px rgba(102,126,234,0.45); }
+.help-fab:hover { background: #5568d3; }
+.help-body h4 { margin: 14px 0 6px; font-size: 14px; color: #667eea; }
+.help-body ul { margin: 0 0 8px; padding-left: 20px; }
+.help-body li { font-size: 13px; color: #555; line-height: 1.9; }
+</style>
+<button type="button" class="help-fab" onclick="togglePageHelp(true)" title="操作帮助" aria-label="操作帮助">?</button>
+<div class="modal-mask" id="pageHelpModal" onclick="if(event.target===this)togglePageHelp(false)">
+    <div class="modal" style="max-width:640px;">
+        <h3>❓ 扫码登记 · 操作帮助</h3>
+        <div class="help-body">
+                        <h4>功能开关（按钮形式，点击开启/关闭，绿色=开启）</h4>
+            <ul>
+                <li><b>弹窗评价</b>：扫码登记成功后弹窗评价。<b>单码</b>：识别成功即弹窗，评价完成（弹窗关闭）前暂停识别，不处理 / 不记录后续码；<b>多码</b>：画面静止，每个码中央出现<b>绿色→圆圈</b>，点选其一登记并弹窗评价，评价完成前同样暂停识别</li><li><b>批量评价</b>：先设置好评价内容，之后扫码登记的学生全部设为相同评价（不弹窗）；再次点击按钮可关闭</li><li><b>连续扫码</b>：默认开启，停留本页连续登记，同一个码只算第一次；关闭后登记成功一次即自动跳转到项目登记情况页</li><li>「弹窗评价」与「批量评价」互斥，开启一个会自动关闭另一个</li>            </ul>
+                        <h4>登记方式</h4>
+            <ul>
+                <li><b>摄像头扫码</b>：进入页面自动开始扫码（启动失败时保留【开始扫码】按钮，可手动点击重开）；手机优先后置摄像头</li><li><b>多码同识</b>：摄像头画面中同时出现多个二维码时可一次全部登记（整帧识别 + 分块扫描，画面无需对准单一取景框）；开启「弹窗评价」时多码不自动登记，改为画面静止点选评价</li><li><b>扫码提示</b>：识别到二维码时<b>蓝色细框</b>标出；登记成功后在码面中央显示<b>绿色✓</b>（约2秒）；<b>已登记过的码</b>显示绿色边框；<b>非本班学生的码</b>显示红色边框+红色?</li><li><b>图片识别（支持多码）</b>：上传一张或多张二维码照片，照片中的全部二维码一次性识别登记</li><li><b>手动输入</b>：输入学生编号后回车或点【登记】（面板默认隐藏，摄像头启动失败时自动出现作为兜底）</li><li>摄像头需要 HTTPS 安全环境；权限被拒时请在浏览器/系统设置中允许摄像头后重试，被其他程序占用时请关闭后重试</li>            </ul>
+                        <h4>答题（答题码项目）</h4>
+            <ul>
+                <li>答题项目按<b>答题码朝向</b>识别选项（A上 / B右 / C下 / D左），<b>重复识别自动更新为最新答案</b>（登记一次，其后仅改选项，约 1.5 秒去抖防连击）</li><li>视频窗口右上角 HUD 实时显示<b>已答 / 未答人数</b>与 A/B/C/D 各选项人数分布</li>            </ul>
+                        <h4>举牌（举牌卡项目）</h4>
+            <ul>
+                <li>举牌项目识别<b>自定义 6x6 黑白图案卡</b>（非二维码）：图案唯一对应<b>学生序号（座号）</b>，<b>哪条边朝上=选了哪项</b>（A上 / B右 / C下 / D左），规则同答题模式（重复识别自动改答案）</li><li>举牌卡按序号编码，<b>全班通用</b>（A 班的举牌卡到 B 班同样可用，按当前项目班级的序号定位学生）；序号需为 1-255 的整数且班级内唯一（重复序号无法唯一识别）</li><li>图案格大、黑块集中居中，识别快且抗模糊，摄像头画面中<b>多张举牌卡可同框一次全部识别</b>；也支持【图片识别】上传全班合影逐张解析</li><li>识别登记成功后，画面上<b>每个码各自持续显示「序号 姓名 选项」标注</b>（多码同屏互不干扰，随码移动），码移出摄像头画面后标注消失</li><li>全班举牌卡在「二维码」页点【打印全班举牌卡】打印（A4 每生一张，黑白打印即可）；<b>已禁用学生不打印</b></li><li>视频窗口右上角 HUD 同样实时显示已答 / 未答与 A/B/C/D 分布</li>            </ul>
+                        <h4>补登记与记录</h4>
+            <ul>
+                <li>打卡项目从项目页日历进入并带日期时，页面顶部显示橙色补登横幅，本次登记仅记该日打卡</li><li>「登记记录」实时显示每次登记结果；点【查看本项目登记情况】进入项目操作页</li>            </ul>
+                    </div>
+        <div class="modal-actions">
+            <button type="button" class="btn" onclick="togglePageHelp(false)">我知道了</button>
+        </div>
+    </div>
+</div>
+<style>
+/* ===== 全局操作反馈 toast：页面下方中央、黑色（同 omr_scan.php）；3 秒自动消失，sticky=重要提示需点击才消失 ===== */
+.toast-wrap { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:3000; display:flex; flex-direction:column-reverse; gap:8px; align-items:center; max-width:92vw; pointer-events:none; }
+.toast { pointer-events:auto; background:rgba(40,44,60,0.92); color:#fff; box-shadow:0 8px 24px rgba(0,0,0,0.28); border-radius:10px; padding:10px 16px; font-size:14px; line-height:1.6; max-width:92vw; word-break:break-all; cursor:pointer; animation:toastIn .22s ease; }
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@media (max-width: 768px) { .toast-wrap { bottom:76px; } }
+/* ===== 行内小问号按钮（点击在问号旁弹出说明浮层；与右上角大 ? 操作帮助并存） ===== */
+.hint-q { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; min-width:16px; border-radius:50%; background:#667eea; color:#fff; font-size:11px; font-weight:bold; line-height:1; border:none; cursor:pointer; vertical-align:middle; margin:0 0 2px 6px; padding:0; box-shadow:0 1px 4px rgba(102,126,234,0.4); font-family:inherit; }
+.hint-q:hover { background:#5568d3; }
+/* 小问号说明浮层：紧贴问号按钮（优先下方，放不下翻转到上方），点浮层外/再点同一个小问号收起 */
+.hint-pop { position:fixed; z-index:4000; background:#fff; color:#333; border:1px solid #e3e6f0; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.18); padding:12px 14px; font-size:13px; line-height:1.8; text-align:left; max-width:340px; max-height:70vh; overflow-y:auto; word-break:break-all; animation:toastIn .18s ease; }
+.hint-pop b { color:#667eea; }
+@media (max-width: 768px) { .hint-pop { max-width:92vw; } }
+</style>
+<script>
+// ===== 全局操作反馈 toast：showToast(msg, type, sticky) 页面下方中央黑色（同 omr_scan.php）；sticky=true 重要提示需点击才消失 =====
+function showToast(msg, type, sticky) {
+    var wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.className = 'toast-wrap'; document.body.appendChild(wrap); }
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' toast-' + type : '');
+    t.innerHTML = msg;
+    t.addEventListener('click', function () { dismiss(); });
+    wrap.appendChild(t);
+    var tm = null;
+    function dismiss() { if (tm) clearTimeout(tm); if (t.parentNode) t.parentNode.removeChild(t); }
+    if (!sticky) tm = setTimeout(dismiss, 3000);
+    return t;
+}
+// 页面内 PHP 渲染的 .alert-success/.alert-error/.alert-danger 横幅自动转浮窗（error 需点击关闭；info/warning 常驻说明保留横幅）
+(function () {
+    document.querySelectorAll('.alert.alert-success, .alert.alert-error, .alert.alert-danger').forEach(function (el) {
+        var type = el.classList.contains('alert-success') ? 'success' : 'error';
+        showToast(el.innerHTML, type, type === 'error');
+        el.style.display = 'none';
+    });
+})();
+// ===== 行内小问号说明：toggleHint(event, 'HTML 说明文字') → 问号旁浮层（优先下方，放不下翻转到上方；点浮层外/再点同一个小问号收起） =====
+function hintPopPos(p) {
+    var b = p.__src; if (!b) return;
+    var r = b.getBoundingClientRect();
+    var pw = p.offsetWidth, ph = p.offsetHeight;
+    var left = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, window.innerWidth - pw - 8));
+    var top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;   // 下方放不下：翻转到上方
+    p.style.left = left + 'px';
+    p.style.top = Math.max(8, top) + 'px';
+}
+function hintPopClose() {
+    var p = document.getElementById('hintPop');
+    if (p && p.parentNode) p.parentNode.removeChild(p);
+}
+function toggleHint(ev, html) {
+    ev.stopPropagation();
+    var b = ev.currentTarget;
+    var old = document.getElementById('hintPop');
+    if (old && old.__src === b) { hintPopClose(); return; }   // 再点同一个小问号：收起
+    hintPopClose();
+    var p = document.createElement('div');
+    p.id = 'hintPop';
+    p.className = 'hint-pop';
+    p.innerHTML = html;
+    p.__src = b;
+    p.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.body.appendChild(p);
+    hintPopPos(p);
+    window.addEventListener('scroll', hintPopSync, true);
+    window.addEventListener('resize', hintPopSync);
+}
+// 滚动/缩放时跟随问号按钮重新定位；按钮已从 DOM 移除（如弹窗关闭）则连带收起
+function hintPopSync() {
+    var p = document.getElementById('hintPop');
+    if (!p) return;
+    if (!p.__src || !p.__src.isConnected) { hintPopClose(); return; }
+    hintPopPos(p);
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.hint-pop')) return;
+    hintPopClose();
+});
+// ===== 全局「⚙ 管理 ▾」二级菜单开关（classes/projects/project_view 卡片与工具栏共用；展开时抬升所在卡片层级避免遮挡） =====
+function toggleDD(e, btn) {
+    e.stopPropagation();
+    var dd = btn.closest('.admin-dd');
+    if (!dd) return;
+    var wasOpen = dd.classList.contains('open');
+    document.querySelectorAll('.admin-dd.open').forEach(function (d) {
+        d.classList.remove('open');
+        var card = d.closest('.item-card');
+        if (card) card.classList.remove('dd-top');
+    });
+    if (!wasOpen) {
+        dd.classList.add('open');
+        var card = dd.closest('.item-card');
+        if (card) card.classList.add('dd-top');
+    }
+    btn.classList.toggle('active', dd.classList.contains('open'));   // project_view ⚙ 按钮高亮态
+}
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('.pv-dd')) return;   // project_view ⚙ 视图工具条自管（内部点击不收起）
+    document.querySelectorAll('.admin-dd.open').forEach(function (d) {
+        d.classList.remove('open');
+        var card = d.closest('.item-card');
+        if (card) card.classList.remove('dd-top');
+    });
+});
+</script>
+<script>
+function togglePageHelp(open) {
+    var m = document.getElementById('pageHelpModal');
+    if (m) m.classList.toggle('show', open);
+}
+// 三组选项卡切换（班级管理/项目列表：我的 / 授权 / 其他）
+function switchCtxTab(btn, group, key) {
+    btn.parentElement.querySelectorAll('.ctx-tab').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    document.querySelectorAll('.ctx-tabpane[data-group="' + group + '"]').forEach(function (p) {
+        p.style.display = (p.getAttribute('data-key') === key) ? '' : 'none';
+    });
+}
+// 所有弹窗统一注入「最大化 / 还原」+「✕ 关闭」按钮（顺序：最大化 关闭；PC 自动宽高、手机 90%，均可一键撑满）
+(function () {
+    function initModalMaxBtns() {
+        document.querySelectorAll('.modal-mask .modal').forEach(function (m) {
+            if (m.querySelector('.modal-max-btn')) return;
+            var max = document.createElement('button');
+            max.type = 'button';
+            max.className = 'modal-max-btn';
+            max.title = '最大化 / 还原';
+            max.innerHTML = '&#x2922;';
+            max.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var maxed = m.classList.toggle('modal-max');
+                max.innerHTML = maxed ? '&#x2923;' : '&#x2922;';
+            });
+            m.appendChild(max);
+            // ✕ 关闭按钮（位于最大化右侧）：关闭所属弹窗，还原最大化状态并广播 modalclosed
+            var close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'modal-close-btn';
+            close.title = '关闭';
+            close.setAttribute('aria-label', '关闭');
+            close.innerHTML = '&#x2715;';
+            close.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var mask = m.closest('.modal-mask');
+                m.classList.remove('modal-max');
+                max.innerHTML = '&#x2922;';
+                if (mask) {
+                    mask.classList.remove('show');
+                    mask.dispatchEvent(new CustomEvent('modalclosed', { bubbles: false }));
+                }
+            });
+            m.appendChild(close);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initModalMaxBtns);
+    } else {
+        initModalMaxBtns();
+    }
+})();
+</script>
+</body>
+</html>
+

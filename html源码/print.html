@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>打印二维码 - 潜记二维码作业登记系统</title>
+    <link rel="stylesheet" href="css/style.css?v=20260915">
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="favicon.ico"/>
+    <script src="js/db.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/sw_boot.js"></script>
+    <style>
+        body { background: white; }
+        .print-toolbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            background: white;
+            padding: 8px 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .print-toolbar form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; color: #555; }
+        .print-toolbar label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+        .print-toolbar select { padding: 2px 4px; }
+        .print-body { padding: 110px 20px 40px; max-width: 900px; margin: 0 auto; }
+        .print-title { text-align: center; margin-bottom: 8px; font-size: 20px; font-weight: bold; }
+        .print-sub { text-align: center; color: #666; font-size: 13px; margin-bottom: 25px; }
+        .page-break { page-break-after: always; padding-bottom: 40px; }
+        .qr-top { margin-bottom: 8px; }
+        .qr-bottom { margin-top: 8px; }
+
+        @media print {
+            .print-toolbar { display: none; }
+            .print-body { padding: 0; }
+        }
+        @page { size: A4 portrait; margin: 12mm; }
+        /* 字号设置下拉面板 */
+        .fs-panel { position: absolute; top: 100%; right: 0; margin-top: 4px; background: #fff; border: 1px solid #e0e3ef;
+            border-radius: 8px; padding: 10px 12px; display: flex; gap: 8px; flex-wrap: wrap; z-index: 30;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.12); width: max-content; }
+        .fs-panel label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+        .fs-panel input { width: 52px; padding: 2px 4px; }
+        details.fs-dd > summary { list-style: none; cursor: pointer; }
+        details.fs-dd > summary::-webkit-details-marker { display: none; }
+        details.fs-dd[open] .fs-panel { display: flex; }
+    </style>
+</head>
+<body>
+<div class="print-toolbar" id="toolbar" style="display:none;">
+    <div style="flex:1;"></div>
+    <!-- 排版设置：一行几列 + 文字项显隐/上/下位置 + 每类文字字号（原 GET 自提交改为 JS 重渲染，不刷新页） -->
+    <form autocomplete="off" onsubmit="return false;">
+        <label>一行<span id="colsLabel"></span>
+            <select name="cols" onchange="applyOpts()">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+            </select>
+        </label>
+        <label title="二维码边长（像素，网页与打印一致）；改动后可覆盖按列数的默认大小">码大小
+            <input type="range" name="qs" min="40" max="600" value="140" oninput="qsNum.value=this.value" onchange="applyOpts()" autocomplete="off">
+            <input type="number" id="qsNum" style="width:60px;" min="40" max="600" value="140" onchange="this.form.qs.value=this.value;applyOpts()" autocomplete="off"> px
+        </label>
+        <label id="countWrap" style="display:none;" title="同一学生二维码在一页内重复的份数">数量
+            <input type="number" name="count" min="1" max="99" value="" placeholder="整页" style="width:64px;" onchange="applyOpts()" autocomplete="off">
+        </label>
+        <label><input type="checkbox" name="f_name" value="1" checked onchange="applyOpts()" autocomplete="off"> 姓名
+            <select name="p_name" onchange="applyOpts()">
+                <option value="top" selected>上方</option>
+                <option value="bottom">下方</option>
+            </select>
+        </label>
+        <label><input type="checkbox" name="f_seat" value="1" checked onchange="applyOpts()" autocomplete="off"> 序号
+            <select name="p_seat" onchange="applyOpts()">
+                <option value="top" selected>上方</option>
+                <option value="bottom">下方</option>
+            </select>
+        </label>
+        <label><input type="checkbox" name="f_no" value="1" checked onchange="applyOpts()" autocomplete="off"> 编号
+            <select name="p_no" onchange="applyOpts()">
+                <option value="top" selected>上方</option>
+                <option value="bottom">下方</option>
+            </select>
+        </label>
+        <label><input type="checkbox" name="f_remark" value="1" checked onchange="applyOpts()" autocomplete="off"> 备注
+            <select name="p_remark" onchange="applyOpts()">
+                <option value="top">上方</option>
+                <option value="bottom" selected>下方</option>
+            </select>
+        </label>
+        <details class="fs-dd" style="position:relative;">
+            <summary class="btn btn-sm btn-outline">字号设置</summary>
+            <div class="fs-panel">
+                <label>标题 <input type="number" name="s_title" min="6" max="96" value="20" onchange="applyOpts()" autocomplete="off"></label>
+                <label>副标题 <input type="number" name="s_sub" min="6" max="96" value="13" onchange="applyOpts()" autocomplete="off"></label>
+                <label>姓名 <input type="number" name="s_name" min="6" max="96" value="22" onchange="applyOpts()" autocomplete="off"></label>
+                <label>序号 <input type="number" name="s_seat" min="6" max="96" value="13" onchange="applyOpts()" autocomplete="off"></label>
+                <label>编号 <input type="number" name="s_no" min="6" max="96" value="13" onchange="applyOpts()" autocomplete="off"></label>
+                <label>备注 <input type="number" name="s_remark" min="6" max="96" value="12" onchange="applyOpts()" autocomplete="off"></label>
+            </div>
+        </details>
+    </form>
+    <div style="display:flex;gap:8px;">
+        <button class="btn btn-sm" onclick="window.print()">打印</button>
+        <button class="btn btn-sm" id="pdfBtn" onclick="exportPDF()">导出PDF</button>
+        <button class="btn btn-sm" id="wordBtn" onclick="exportWord()">导出Word</button>
+        <a id="backLink" href="qrcode.html" class="btn btn-sm btn-outline" style="text-decoration:none;">返回</a>
+    </div>
+</div>
+
+<div class="print-body" id="printBody">
+    <div class="tip" style="text-align:center;">加载中…</div>
+</div>
+
+<script src="assets/qrcode.min.js"></script>
+<script src="assets/html2canvas.min.js"></script>
+<script src="assets/jspdf.umd.min.js"></script>
+<script>
+function showToast(msg, type, sticky) {
+    var wrap = document.querySelector('.toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.className = 'toast-wrap'; document.body.appendChild(wrap); }
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' toast-' + type : '');
+    t.innerHTML = msg;
+    t.addEventListener('click', function () { dismiss(); });
+    wrap.appendChild(t);
+    var tm = null;
+    function dismiss() { if (tm) clearTimeout(tm); if (t.parentNode) t.parentNode.removeChild(t); }
+    if (!sticky) tm = setTimeout(dismiss, 3000);
+}
+
+// ===== 参数与排版设置（原 print.php 顶部 GET 设置逻辑；本地版改变设置即时 JS 重渲染）=====
+var classId = QJ.qint('class_id', 0);
+var type = QJ.qint('type', 1) === 2 ? 2 : 1;
+var act = ['print', 'pdf', 'word'].indexOf(QJ.qget('act')) >= 0 ? QJ.qget('act') : '';
+var studentId = QJ.qint('student_id', 0);
+
+var FDEF = [
+    { k: 'name',   label: '姓名', defShow: 1, defPos: 'top' },
+    { k: 'seat',   label: '序号', defShow: 1, defPos: 'top' },
+    { k: 'no',     label: '编号', defShow: 1, defPos: 'top' },
+    { k: 'remark', label: '备注', defShow: 1, defPos: 'bottom' }
+];
+var FSDEF = [
+    { k: 'title',  label: '标题', def: 20 },
+    { k: 'sub',    label: '副标题', def: 13 },
+    { k: 'name',   label: '姓名', def: 22 },
+    { k: 'seat',   label: '序号', def: 13 },
+    { k: 'no',     label: '编号', def: 13 },
+    { k: 'remark', label: '备注', def: 12 }
+];
+var rawCols = QJ.qint('cols', 0);
+var submitted = rawCols > 0;   // 带设置提交过：未勾选的复选框不会出现在 URL 中，视为 0
+var cols = (rawCols >= 1 && rawCols <= 10) ? rawCols : (type === 1 ? 2 : 1);
+var countRaw = QJ.qint('count', 0);
+if (countRaw < 0 || countRaw > 99) countRaw = 0;
+var fields = {};
+FDEF.forEach(function (d) {
+    var show = submitted ? (QJ.qint('f_' + d.k, 0) === 1) : (d.defShow === 1);
+    var pos = QJ.qget('p_' + d.k) === 'bottom' ? 'bottom' : 'top';
+    fields[d.k] = { show: show, pos: pos };
+});
+var fs = {};
+FSDEF.forEach(function (d) {
+    var v = QJ.qint('s_' + d.k, 0);
+    fs[d.k] = (v >= 6 && v <= 96) ? v : d.def;
+});
+var QR_BASE = type === 2
+    ? [0, 360, 200, 150, 120, 100, 88, 78, 70, 64, 58]
+    : [0, 180, 140, 110, 90, 76, 66, 58, 52, 47, 43];
+var qsLocked = false;   // 与原版一致：任意设置变更提交后，码大小不再跟随列数默认（首次提交即冻结）
+var qsRaw = QJ.qint('qs', 0);
+if (qsRaw >= 40 && qsRaw <= 600) { qsLocked = true; }
+var qrSize = qsLocked ? qsRaw : QR_BASE[cols];
+
+var FMO = document.querySelector('.print-toolbar form');
+
+// 应用排版设置：读取控件值 → 重渲染（原 this.form.submit() 改造，不刷新页）
+function applyOpts() {
+    var e = FMO.elements;
+    if (!qsLocked) {   // 首次改动：冻结当前显示的码大小（原版 GET 提交总是携带 qs 值的语义）
+        qsLocked = true;
+        qrSize = Math.min(Math.max(parseInt(e['qs'].value, 10) || qrSize, 40), 600);
+    }
+    cols = parseInt(e['cols'].value, 10) || cols;
+    countRaw = Math.min(Math.max(parseInt(e['count'].value, 10) || 0, 0), 99);
+    FDEF.forEach(function (d) {
+        fields[d.k].show = e['f_' + d.k].checked;
+        fields[d.k].pos = e['p_' + d.k].value === 'bottom' ? 'bottom' : 'top';
+    });
+    FSDEF.forEach(function (d) {
+        var v = parseInt(e['s_' + d.k].value, 10);
+        fs[d.k] = (v >= 6 && v <= 96) ? v : d.def;
+    });
+    renderPrint();
+}
+
+// 个人版整页自动份数：按真实行高估算铺满一页 A4（@page 12mm 页边距 → 可打印高约 1032px）
+function autoCountNow() {
+    var textsH = 0;
+    FDEF.forEach(function (d) { if (fields[d.k].show) textsH += fs[d.k] * 1.5 + 8; });
+    var cellH = qrSize + 36 + textsH;
+    var budget = 1032 - (fs.title * 1.4 + 8 + fs.sub * 1.4 + 25) - 12;
+    var rows = Math.max(1, Math.floor((budget + 14) / (cellH + 14)));
+    return rows * cols;
+}
+function countVal() { return type === 2 ? (countRaw > 0 ? countRaw : autoCountNow()) : 1; }
+
+var CLASS_NAME = '';
+var STUDENTS = [];
+
+// ===== 工具栏初始化（一次；此后由 applyOpts 增量应用）=====
+function initToolbar() {
+    document.getElementById('toolbar').style.display = 'flex';
+    document.getElementById('colsLabel').textContent = type === 2 ? '几' : '几列';
+    var e = FMO.elements;
+    e['cols'].value = String(cols);
+    e['qs'].value = qrSize;
+    document.getElementById('qsNum').value = qrSize;
+    document.getElementById('countWrap').style.display = type === 2 ? '' : 'none';
+    e['count'].value = countRaw > 0 ? countRaw : '';
+    FDEF.forEach(function (d) {
+        e['f_' + d.k].checked = fields[d.k].show;
+        e['p_' + d.k].value = fields[d.k].pos;
+    });
+    FSDEF.forEach(function (d) { e['s_' + d.k].value = fs[d.k]; });
+    document.getElementById('backLink').href = 'qrcode.html?class_id=' + classId;
+}
+
+// ===== 单格文字项（上方/下方组；固定顺序：姓名→序号→编号→备注；字号按设置内联注入）=====
+function qrTextsHtml(s, group) {
+    var html = '';
+    FDEF.forEach(function (d) {
+        var f = fields[d.k];
+        if (!f.show || f.pos !== group) return;
+        var style = 'font-size:' + fs[d.k] + 'px;' + (d.k === 'name' ? 'font-weight:bold;' : '');
+        if (d.k === 'name') {
+            if (String(s.name == null ? '' : s.name) === '') return;
+            html += '<div class="p-name" style="' + style + '">' + QJ.h(s.name) + '</div>';
+        } else if (d.k === 'seat') {
+            if (String(s.seat_no == null ? '' : s.seat_no) === '') return;
+            html += '<div class="p-sub" style="' + style + '">序号 ' + QJ.h(s.seat_no) + '</div>';
+        } else if (d.k === 'no') {
+            if (String(s.student_no == null ? '' : s.student_no) === '') return;
+            html += '<div class="p-sub" style="' + style + '">编号 ' + QJ.h(s.student_no) + '</div>';
+        } else if (d.k === 'remark') {
+            if (String(s.remark == null ? '' : s.remark) === '') return;
+            html += '<div class="p-remark" style="' + style + '">' + QJ.h(s.remark) + '</div>';
+        }
+    });
+    return html;
+}
+function cellHtml(s, size, avoid) {
+    return '<div class="print-cell"' + (avoid ? ' style="page-break-inside:avoid;"' : '') + '>'
+        + '<div class="qr-top">' + qrTextsHtml(s, 'top') + '</div>'
+        + '<div class="qr-print" data-content="' + QJ.h(QJ.build_student_qr_content(s.student_no)) + '" data-size="' + size + '"></div>'
+        + '<div class="qr-bottom">' + qrTextsHtml(s, 'bottom') + '</div>'
+        + '</div>';
+}
+
+// ===== 渲染打印主体（type=1 全班表格 / type=2 个人单页；设置变更后整体重建）=====
+function renderPrint() {
+    var cnt = countVal();
+    document.title = (type === 2 ? '个人单页二维码' : '全班二维码表格') + ' - ' + CLASS_NAME;
+    var h = '<div class="print-title-block">'
+        + '<div class="print-title" style="font-size:' + fs.title + 'px;">' + QJ.h(CLASS_NAME) + ' - ' + (type === 2 ? '个人单页二维码' : '全班二维码表格') + '</div>'
+        + '<div class="print-sub" style="font-size:' + fs.sub + 'px;">扫码识别学生编号（潜记二维码作业登记系统）</div>'
+        + '</div>';
+    if (type === 1) {
+        // 全班表格版：一行 cols 列
+        h += '<div class="print-grid" style="grid-template-columns:repeat(' + cols + ',1fr);">';
+        STUDENTS.forEach(function (s) { h += cellHtml(s, qrSize, false); });
+        h += '</div>';
+    } else {
+        // 个人单页版：每名学生一页；同一学生的二维码按「一行几个 × 数量」重复铺排（数量留空=整页自动铺满）
+        STUDENTS.forEach(function (s, i) {
+            h += '<div' + (i < STUDENTS.length - 1 ? ' class="page-break"' : '') + '>';
+            h += '<div class="print-grid" style="grid-template-columns:repeat(' + cols + ',1fr);gap:14px;">';
+            for (var c = 0; c < cnt; c++) h += cellHtml(s, qrSize, true);
+            h += '</div></div>';
+        });
+    }
+    document.getElementById('printBody').innerHTML = h;
+    // 生成二维码
+    var els = document.querySelectorAll('.qr-print');
+    for (var i = 0; i < els.length; i++) {
+        new QRCode(els[i], {
+            text: els[i].getAttribute('data-content'),
+            width: parseInt(els[i].getAttribute('data-size') || '140', 10),
+            height: parseInt(els[i].getAttribute('data-size') || '140', 10),
+            correctLevel: QRCode.CorrectLevel.L
+        });
+    }
+    PDF_COLS = cols;
+    PDF_TYPE = type;
+    PDF_COUNT = type === 2 ? cnt : 1;
+}
+
+// ===== 加载数据（班级 + 未禁用学生；单人模式只保留指定学生）=====
+async function loadData() {
+    if (classId <= 0) { location.href = 'classes.html'; return; }
+    var cls = await DB.get('classes', classId);
+    if (!cls || cls.deleted_at) { location.href = 'classes.html'; return; }
+    CLASS_NAME = cls.name || '';
+    var rows = await DB.by('students', 'class_id', classId);
+    rows = rows.filter(function (s) { return !parseInt(s.disabled, 10); });   // 已禁用学生不打印
+    rows.sort(function (a, b) {   // ORDER BY CAST(seat_no AS UNSIGNED) ASC, id ASC
+        var sa = parseInt(a.seat_no, 10) || 0, sb = parseInt(b.seat_no, 10) || 0;
+        return (sa - sb) || (a.id - b.id);
+    });
+    if (studentId > 0) rows = rows.filter(function (s) { return parseInt(s.id, 10) === studentId; });
+    STUDENTS = rows;
+    initToolbar();
+    renderPrint();
+    // 自动触发（qrcode.html 单人快捷按钮：act=print/pdf/word）
+    if (act) {
+        var a = act; act = '';
+        setTimeout(function () {
+            if (a === 'print') window.print();
+            else if (a === 'pdf') exportPDF();
+            else if (a === 'word') exportWord();
+        }, 600);
+    }
+}
+
+// ===== 导出（PDF / Word）：共享截图管线 =====
+var PDF_COLS = cols;
+var PDF_TYPE = type;      // 1=全班表格 2=个人单页（每生一页）
+var PDF_COUNT = 1;        // 个人版每生份数（renderPrint 时刷新）
+var exporting = false;
+
+// 逐格截图（个人版同一学生重复格只截一次）→ [{img(base64), w, h}]
+// 用 JPEG 压缩：PNG 大图经 jsPDF 解码再编码后体积暴涨，多生导出会触发 "Invalid string length"
+async function captureCells(setProgress) {
+    var cellEls = document.querySelectorAll('.print-cell');
+    var step = PDF_TYPE === 2 ? Math.max(1, PDF_COUNT) : 1;
+    var uniq = [];
+    for (var i = 0; i < cellEls.length; i += step) {
+        setProgress('生成中 ' + (uniq.length + 1) + '/' + Math.ceil(cellEls.length / step) + '…');
+        var c = await html2canvas(cellEls[i], { scale: 2, backgroundColor: '#ffffff' });
+        uniq.push({ img: c.toDataURL('image/jpeg', 0.9), w: c.width, h: c.height });
+    }
+    return uniq;
+}
+// 标题截图（仅 PDF 首页用）
+async function captureTitle() {
+    var titleEl = document.querySelector('.print-title-block');
+    if (!titleEl) return null;
+    var tc = await html2canvas(titleEl, { scale: 2, backgroundColor: '#ffffff' });
+    return { img: tc.toDataURL('image/jpeg', 0.9), w: tc.width, h: tc.height };
+}
+// 占用导出按钮（进度显示）
+function beginExport(btnId) {
+    if (exporting) return null;
+    if (typeof html2canvas === 'undefined') { showToast('导出组件加载失败，请刷新页面重试', 'error'); return null; }
+    exporting = true;
+    var btn = document.getElementById(btnId);
+    var oldText = btn.textContent;
+    btn.disabled = true;
+    return {
+        progress: function (t) { btn.textContent = t; },
+        done: function () { btn.disabled = false; btn.textContent = oldText; exporting = false; }
+    };
+}
+
+// ===== 导出 PDF（A4 分页） =====
+async function exportPDF() {
+    var ctx = beginExport('pdfBtn');
+    if (!ctx) return;
+    try {
+        var J = window.jspdf;
+        if (!J || !J.jsPDF) { showToast('PDF 组件加载失败，请刷新页面重试', 'error'); return; }
+        ctx.progress('准备中…');
+        var pdf = new J.jsPDF('p', 'mm', 'a4');
+        var PAGE_W = 210, PAGE_H = 297, MARGIN = 10, COL_GAP = 4, ROW_GAP = 3;
+        var contentW = PAGE_W - MARGIN * 2;
+        var cellW = (contentW - (PDF_COLS - 1) * COL_GAP) / PDF_COLS;
+        var bottom = PAGE_H - MARGIN;
+
+        var firstTop = MARGIN;
+        var title = await captureTitle();
+        if (title) {
+            var th = Math.min(contentW * (title.h / title.w), 50);
+            pdf.addImage(title.img, 'JPEG', MARGIN, MARGIN, contentW, th);
+            firstTop = MARGIN + th + 6;
+        }
+
+        var uniq = await captureCells(ctx.progress);
+        if (!uniq.length) { showToast('没有可导出的内容', 'error'); return; }
+
+        var maxAspect = 0;
+        uniq.forEach(function (u) { maxAspect = Math.max(maxAspect, u.h / u.w); });
+        var rowH = cellW * maxAspect + ROW_GAP;
+
+        var y = firstTop, col = 0, pageDirty = false;
+        uniq.forEach(function (u) {
+            var reps = PDF_TYPE === 2 ? PDF_COUNT : 1;
+            for (var r = 0; r < reps; r++) {
+                if (PDF_TYPE === 2 && r === 0 && pageDirty) {
+                    pdf.addPage(); y = MARGIN; col = 0; pageDirty = false;
+                }
+                if (y + rowH > bottom) {
+                    pdf.addPage(); y = MARGIN; col = 0; pageDirty = false;
+                }
+                var ch = cellW * (u.h / u.w);
+                pdf.addImage(u.img, 'JPEG', MARGIN + col * (cellW + COL_GAP), y, cellW, ch);
+                pageDirty = true;
+                col++;
+                if (col >= PDF_COLS) { col = 0; y += rowH; }
+            }
+        });
+
+        pdf.save(wordPdfName() + '.pdf');
+    } catch (e) {
+        showToast('PDF 生成失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+        ctx.done();
+    }
+}
+
+// ===== 导出 Word（MHTML 格式 .doc：HTML 部分 + JPEG 内嵌，Word 完整渲染二维码与文字） =====
+function b64ut8(str) { return btoa(unescape(encodeURIComponent(str))); }
+function b64wrap(b64) { return b64.replace(/(.{76})/g, '$1\r\n'); }
+function wordPdfName() {
+    return '二维码_' + CLASS_NAME + '_' + (PDF_TYPE === 2 ? '个人单页' : '全班表格');
+}
+async function exportWord() {
+    var ctx = beginExport('wordBtn');
+    if (!ctx) return;
+    try {
+        ctx.progress('准备中…');
+        var uniq = await captureCells(ctx.progress);
+        if (!uniq.length) { showToast('没有可导出的内容', 'error'); return; }
+
+        // Word HTML 版面（px，A4≈794px 宽；12mm≈45px 页边距）
+        var PAGE_W = 794, MARGIN = 45, COL_GAP = 15, ROW_GAP = 10;
+        var contentW = PAGE_W - MARGIN * 2;
+        var cellW = Math.floor((contentW - (PDF_COLS - 1) * COL_GAP) / PDF_COLS);
+
+        // 每格图片按目标宽度等比缩放；base64 JPEG 转 MHTML 内嵌 part
+        var images = [];
+        var imgTag = function (u, idx) {
+            var cid = 'qrcell' + idx;
+            images.push({ cid: cid, b64: u.img.split(',')[1] });
+            var h = Math.round(cellW * (u.h / u.w));
+            return '<img src="cid:' + cid + '" width="' + cellW + '" height="' + h + '" style="display:block;margin:0 auto;">';
+        };
+
+        var titleHtml = '<p style="text-align:center;font-size:' + fs.title + 'pt;font-weight:bold;margin:0 0 6pt;">'
+            + QJ.h(CLASS_NAME) + ' - ' + (PDF_TYPE === 2 ? '个人单页二维码' : '全班二维码表格')
+            + '</p>'
+            + '<p style="text-align:center;font-size:' + fs.sub + 'pt;color:#666;margin:0 0 14pt;">扫码识别学生编号（潜记二维码作业登记系统）</p>';
+
+        var body = '';
+        if (PDF_TYPE === 1) {
+            // 全班表格：一张表按 cols 排布，行满换行，Word 自动分页
+            var rowsHtml = '';
+            for (var i = 0; i < uniq.length; i += PDF_COLS) {
+                rowsHtml += '<tr>';
+                for (var j = 0; j < PDF_COLS; j++) {
+                    rowsHtml += '<td class="qrcell">' + (uniq[i + j] ? imgTag(uniq[i + j], i + j) : '') + '</td>';
+                }
+                rowsHtml += '</tr>';
+            }
+            body = titleHtml + '<table class="qrt">' + rowsHtml + '</table>';
+        } else {
+            // 个人单页版：每名学生一页（page-break-before）；重复格复用同一次截图
+            uniq.forEach(function (u, idx) {
+                var cells = '';
+                for (var r = 0; r < PDF_COUNT; r++) {
+                    cells += '<td class="qrcell">' + imgTag(u, idx * 1000 + r) + '</td>';
+                    if ((r + 1) % PDF_COLS === 0 && r + 1 < PDF_COUNT) cells += '</tr><tr>';
+                }
+                body += (idx > 0 ? '<br clear="all" style="page-break-before:always">' : '')
+                    + '<table class="qrt"><tr>' + cells + '</tr></table>';
+            });
+            body = titleHtml + body;
+        }
+
+        var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">'
+            + '<head><meta charset="utf-8"><title>' + wordPdfName() + '</title>'
+            + '<style>@page Section1 { size: 595.3pt 841.9pt; margin: 34pt; } div.Section1 { page: Section1; }'
+            + ' table.qrt { border-collapse: collapse; } td.qrcell { text-align: center; padding: 6pt; }'
+            + ' img { border: 1px dashed #bbb; }</style></head>'
+            + '<body><div class="Section1">' + body + '</div></body></html>';
+
+        // 组装 MHTML（multipart/related：HTML + JPEG parts）
+        var B = '----=_QR_MHTML_BOUNDARY_';
+        var mime = 'MIME-Version: 1.0\r\n'
+            + 'Content-Type: multipart/related; type="text/html"; boundary="' + B + '"\r\n\r\n'
+            + '--' + B + '\r\n'
+            + 'Content-Type: text/html; charset="utf-8"\r\n'
+            + 'Content-Transfer-Encoding: base64\r\n'
+            + 'Content-Location: file:///C:/qr/qr.html\r\n\r\n'
+            + b64wrap(b64ut8(html)) + '\r\n';
+        images.forEach(function (im) {
+            mime += '--' + B + '\r\n'
+                + 'Content-Type: image/jpeg\r\n'
+                + 'Content-Transfer-Encoding: base64\r\n'
+                + 'Content-Location: file:///C:/qr/' + im.cid + '.jpg\r\n'
+                + 'Content-ID: <' + im.cid + '>\r\n\r\n'
+                + b64wrap(im.b64) + '\r\n';
+        });
+        mime += '--' + B + '--\r\n';
+
+        var bytes = new Uint8Array(mime.length);
+        for (var b = 0; b < mime.length; b++) bytes[b] = mime.charCodeAt(b) & 0xFF;
+        var blob = new Blob([bytes], { type: 'application/msword' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = wordPdfName() + '.doc';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+    } catch (e) {
+        showToast('Word 生成失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+        ctx.done();
+    }
+}
+
+loadData();
+</script>
+</body>
+</html>
