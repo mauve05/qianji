@@ -186,7 +186,7 @@ MySQL（30 张表）                 js/api_local.js 接口仿真层
 
 ## 🧩 第三方库
 
-前端依赖的 7 个开源库（ECharts、html2canvas、jsPDF、JSZip、html5-qrcode、ZXing、qrcode-generator）已全部本地化在 `assets/` 目录，零 CDN 依赖。完整版本与许可证清单见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+前端依赖的 7 个开源库（ECharts、html2canvas、jsPDF、JSZip、html5-qrcode、ZXing、qrcode-generator）已全部本地化在 `assets/` 目录，零 CDN 依赖。
 
 ## 📜 许可证
 
