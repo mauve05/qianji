@@ -1,4 +1,4 @@
-# 潜记 · 二维码作业登记系统
+# 潜记 · 二维码作业登记、互动举牌答题、答题卡批改系统
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![PHP](https://img.shields.io/badge/PHP-7.2%2B-777bb4)
